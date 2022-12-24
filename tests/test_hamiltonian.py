@@ -56,7 +56,7 @@ def test_potential_energy():
     target_ion_ion = (2.0 / 4.0) + (3.0 / jnp.sqrt(37.0)) + (6.0 / jnp.sqrt(5.0))
 
     target_pe = target_el_ion + target_el_el + target_ion_ion
-    actual_pe = calc_potential_energy(x, ions, charges)
+    actual_pe = calc_potential_energy(ions, charges, x)
 
     np.testing.assert_allclose(actual_pe, target_pe)
 
@@ -94,5 +94,5 @@ def test_local_energy_shape(x):
     f, log_f = make_test_log_f()
     ions, charges = make_test_ions()
 
-    le = calc_local_energy(log_f, None, x, ions, charges)
+    le = calc_local_energy(log_f, None, ions, charges, x)
     assert le.shape == f(None, x).shape
