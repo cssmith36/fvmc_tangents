@@ -11,13 +11,13 @@ import dataclasses
 import pickle
 import time
 
+from jax.numpy import ndarray as Array
 
-_t_real = jnp.float64
-_t_cplx = jnp.complex128
+_t_real = jnp.float32
+_t_cplx = jnp.complex64
 
-
-Array = jnp.ndarray
-PyTree = Any
+# _t_real = jnp.float64
+# _t_cplx = jnp.comple128
 
 
 def compose(*funcs):
@@ -46,16 +46,19 @@ def cmult(x1, x2):
         + 1j * (x1.imag * x2.real + x1.real * x2.imag))
 
 
+def diffmat(xa, xb):
+    return jnp.expand_dims(xa, -2) - jnp.expand_dims(xb, -3)
+
 def pdist(x):
     # x is assumed to have dimension [..., n, 3]
     n = x.shape[-2]
-    diff = jnp.expand_dims(x, -2) - jnp.expand_dims(x, -3)
+    diff = diffmat(x, x)
     diff_padded = diff + jnp.eye(n)[..., None]
     dist = jnp.linalg.norm(diff_padded, axis=-1) * (1 - jnp.eye(n))
     return dist
 
 def cdist(xa, xb):
-    diff = jnp.expand_dims(xa, -2) - jnp.expand_dims(xb, -3)
+    diff = diffmat(xa, xb)
     dist = jnp.linalg.norm(diff, axis=-1)
     return dist
 
@@ -165,17 +168,17 @@ def dict_to_cfg(cdict, **kwargs):
 
 class Serial(nn.Module):
     layers : Sequence[nn.Module]
-    skip_cxn : bool = True
-    actv_fun : Union[str, Callable] = "gelu"
+    residual : bool = True
+    activation : Union[str, Callable] = "gelu"
 
     @nn.compact
     def __call__(self, x):
-        actv = parse_activation(self.actv_fun)
+        actv = parse_activation(self.activation)
         for i, lyr in enumerate(self.layers):
             tmp = lyr(x)
             if i != len(self.layers) - 1:
                 tmp = actv(tmp)
-            if self.skip_cxn:
+            if self.residual:
                 if x.shape[-1] >= tmp.shape[-1]:
                     x = x[...,:tmp.shape[-1]] + tmp
                 else:
