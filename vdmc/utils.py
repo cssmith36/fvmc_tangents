@@ -12,6 +12,7 @@ import pickle
 import time
 
 from jax.numpy import ndarray as Array
+PyTree = Any
 
 _t_real = jnp.float32
 _t_cplx = jnp.complex64
