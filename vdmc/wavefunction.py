@@ -153,3 +153,4 @@ def make_jastrow_slater(ions, charges, spin=None,
     slater = Slater(ions, charges, spin, full_det, orbital_type, orbital_args)
     model = ProductModel([jastrow, slater])
     return model
+    

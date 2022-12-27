@@ -65,3 +65,4 @@ def calc_local_energy(log_psi, params, ions, charges, x):
     ke = calc_kinetic_energy(log_psi, params, x) 
     pe = calc_potential_energy(ions, charges, x)
     return ke + pe
+    

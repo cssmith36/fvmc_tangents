@@ -96,3 +96,4 @@ def test_local_energy_shape(x):
 
     le = calc_local_energy(log_f, None, ions, charges, x)
     assert le.shape == f(None, x).shape
+    
