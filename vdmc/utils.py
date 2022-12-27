@@ -188,6 +188,16 @@ class Serial(nn.Module):
         return x
 
 
+def make_mlp(
+    layer_sizes : Sequence[int],
+    residual : bool = True,
+    activation : Union[str, Callable] = "gelu",
+    **dense_kwargs
+) -> Serial:
+    layers = [nn.Dense(ls, **dense_kwargs) for ls in layer_sizes]
+    return Serial(layers, residual=residual, activation=activation)
+
+
 class Printer:
 
     def __init__(self, 
