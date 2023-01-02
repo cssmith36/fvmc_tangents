@@ -27,6 +27,12 @@ def compose(*funcs):
     return reduce(c2, funcs)
 
 
+def ith_output(func, i):
+    def warpped(*args, **kwargs):
+        return func(*args, **kwargs)[i]
+    return warpped
+
+
 def just_grad(x):
     return x - lax.stop_gradient(x)
 

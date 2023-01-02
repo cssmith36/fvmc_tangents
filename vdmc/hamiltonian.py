@@ -56,7 +56,7 @@ def calc_kinetic_energy(log_psi, params, x):
     elif x.ndim == 3:
         lapl_fn = jax.vmap(_lapl_over_psi)
     else:
-        raise ValueError("only support x with ndim being 2 or 3")
+        raise ValueError(f"only support x with ndim equals 2 or 3, get {x.ndim}")
     
     return -0.5 * lapl_fn(x)
 
