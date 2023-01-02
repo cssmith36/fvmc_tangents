@@ -5,7 +5,7 @@ from functools import partial
 import kfac_jax
 
 from .utils import paxis, ith_output
-from .hamiltonian import calc_local_energy
+from .hamiltonian import calc_kinetic_energy, calc_potential_energy
 
 
 def exp_shifted(x, normalize=None):
@@ -44,10 +44,11 @@ def make_eval_local(model, ions, charges):
         Callable with signature (params, x) -> (eloc, sign, logf) that evaluates 
         local energy, sign and log abs of wavefunctions on given parameters and configurations.
     """
-    log_psi_fn = ith_output(model.apply, 1)
 
     def eval_local(params, x):
-        eloc = calc_local_energy(log_psi_fn, params, ions, charges, x)
+        log_psi_fn = ith_output(partial(model.apply, params), 1)
+        eloc = (calc_kinetic_energy(log_psi_fn, x) 
+                + calc_potential_energy(ions, charges, x))
         sign, logf = model.apply(params, x)
         return (jnp.stack([eloc, eloc.conj()], -1),
                 jnp.stack([sign, sign.conj()], -1),

@@ -1,3 +1,5 @@
+# many test functions are borrowed from vmcnet
+
 import pytest
 import jax
 import numpy as np

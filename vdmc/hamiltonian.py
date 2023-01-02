@@ -30,7 +30,7 @@ def calc_potential_energy(ions, charges, x):
     return el_el + el_ion + ion_ion
 
 
-def calc_kinetic_energy(log_psi, params, x):
+def calc_kinetic_energy(log_psi, x):
     # adapted from FermiNet and vmcnet
     # calc -0.5 * (\nable^2 \psi) / \psi
     # handle batch of x automatically
@@ -42,7 +42,7 @@ def calc_kinetic_energy(log_psi, params, x):
         flat_x = x.reshape(-1)
         ncoord = flat_x.size
 
-        f = lambda flat_x: log_psi(params, flat_x.reshape(x_shape)) # take flattened x
+        f = lambda flat_x: log_psi(flat_x.reshape(x_shape)) # take flattened x
         grad_f = jax.grad(f)
         grad_value, dgrad_f = jax.linearize(grad_f, flat_x)
 
@@ -61,8 +61,8 @@ def calc_kinetic_energy(log_psi, params, x):
     return -0.5 * lapl_fn(x)
 
 
-def calc_local_energy(log_psi, params, ions, charges, x):
-    ke = calc_kinetic_energy(log_psi, params, x) 
+def calc_local_energy(log_psi, ions, charges, x):
+    ke = calc_kinetic_energy(log_psi, x) 
     pe = calc_potential_energy(ions, charges, x)
     return ke + pe
     
