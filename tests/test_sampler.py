@@ -3,7 +3,7 @@ import jax
 import numpy as np
 from jax import numpy as jnp
 
-from vdmc.sampler import choose_sampler_maker, make_batched, make_multistep
+from vdmc.sampler import choose_sampler_maker, make_batched, make_multistep, make_chained
 
 
 _mean = 0.5
@@ -46,3 +46,24 @@ def test_sampler_gaussian(name):
     np.testing.assert_allclose(logprob, _logprob_fn(None, sample))
     np.testing.assert_allclose(sample.mean(), _mean, rtol=0.05)
     np.testing.assert_allclose(sample.std(), _std, rtol=0.05)
+
+
+# @pytest.mark.slow
+def test_sampler_chained():
+    mcmc = make_test_sampler("mcmc")
+    mala = make_test_sampler("mala")
+    sampler = make_chained(mcmc, mala)
+    params = None
+    key1, key2, key3 = jax.random.split(_key0, 3)
+
+    state = sampler.init(key1, params)
+    state = sampler.burn_in(key2, params, state, _nburn)
+    state, (sample, logprob) = jax.jit(sampler.sample)(key3, params, state)
+    state = sampler.refresh(sample, params)
+
+    assert sample.shape == (_nstep, _nchain, _xshape)
+    assert logprob.shape == (_nstep, _nchain)
+    np.testing.assert_allclose(logprob, _logprob_fn(None, sample))
+    np.testing.assert_allclose(sample.mean(), _mean, rtol=0.05)
+    np.testing.assert_allclose(sample.std(), _std, rtol=0.05)
+

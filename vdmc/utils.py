@@ -250,7 +250,7 @@ pmean_if_pmap = wrap_if_pmap(lax.pmean)
 
 @dataclasses.dataclass(frozen=True)
 class PAxis:
-    name  : str
+    name : str
     def __post_init__(self):
         for nm, fn in (("vmap", jax.vmap), ("pmap", jax.pmap),
                        ("pmax", pmax_if_pmap), ("pmin", pmin_if_pmap),

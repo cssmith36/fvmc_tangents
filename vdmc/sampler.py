@@ -81,6 +81,18 @@ def make_multistep_fn(sample_fn, nstep, concat=False):
     return multi_sample
 
 
+def make_chained(*samplers):
+    init = samplers[-1].init
+    def sample(key, params, state):
+        for splr in samplers:
+            state = splr.refresh(state, params)
+            state, data = splr.sample(key, params, state)
+        return state, data
+    def refresh(state, params):
+        return state
+    return MCSampler(sample, init, refresh)
+
+
 ##### Below are generation functions for different samplers #####
 
 def make_gaussian(logdens_fn, sample_shape, mu=0., sigma=1., truncate=None):
