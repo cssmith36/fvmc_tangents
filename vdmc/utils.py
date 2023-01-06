@@ -37,6 +37,20 @@ def just_grad(x):
     return x - lax.stop_gradient(x)
 
 
+@jax.custom_vjp
+def clip_gradient(x, g_min=None, g_max=None):
+  return x  # identity function
+
+def clip_gradient_fwd(x, lo=None, hi=None):
+  return x, (lo, hi)  # save bounds as residuals
+
+def clip_gradient_bwd(res, g):
+  lo, hi = res
+  return (jnp.clip(g, lo, hi), None, None)  # use None to indicate zero cotangents for lo and hi
+
+clip_gradient.defvjp(clip_gradient_fwd, clip_gradient_bwd)
+
+
 def _T(x): 
     return jnp.swapaxes(x, -1, -2)
 

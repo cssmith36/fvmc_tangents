@@ -2,11 +2,13 @@ import jax
 from jax import lax
 from jax import numpy as jnp
 import dataclasses
+import numpy as onp
 from functools import partial
 from typing import NamedTuple, Callable, Tuple, Union, Dict
 
+from .wavefunction import nn
 from .utils import PyTree, Array
-from .utils import ravel_shape, tree_where, tree_map
+from .utils import ravel_shape, tree_where, tree_map, clip_gradient
 
 
 KeyArray = Array
@@ -34,7 +36,7 @@ class MCSampler(NamedTuple):
 
 def choose_sampler_maker(name: str) -> Callable[..., MCSampler]:
     name = name.lower()
-    if name in ("direct", "gaussian"):
+    if name in ("gaussian",):
         return make_gaussian
     if name in ("metropolis", "mcmc", "mh"):
         return make_metropolis
@@ -47,33 +49,42 @@ def choose_sampler_maker(name: str) -> Callable[..., MCSampler]:
     raise NotImplementedError(f"unsupported sampler type: {name}")
 
 
+def make_sampler(model: nn.Module, n_elec: int, 
+                 name: str, beta: float = 1, 
+                 **kwargs):
+    maker = choose_sampler_maker(name)
+    logdens_fn = lambda p, x: 2 * beta * model.apply(p, x)[1]
+    sample_shape = onp.array([n_elec, 3])
+    return maker(logdens_fn, sample_shape, **kwargs)
+
+
 ##### Below are sampler transformations #####
 
-def make_batched(sampler: MCSampler, nbatch: int, concat: bool = False):
+def make_batched(sampler: MCSampler, n_batch: int, concat: bool = False):
     sample_fn, init_fn, refresh_fn = sampler
     def sample(key, params, state):
-        vkey = jax.random.split(key, nbatch)
+        vkey = jax.random.split(key, n_batch)
         new_state, data = jax.vmap(sample_fn, (0, None, 0))(vkey, params, state)
         if concat:
             data = tree_map(jnp.concatenate, data)
         return new_state, data
     def init(key, params):
-        vkey = jax.random.split(key, nbatch)
+        vkey = jax.random.split(key, n_batch)
         return jax.vmap(init_fn, (0, None))(vkey, params)
     refresh = jax.vmap(refresh_fn, (0, None))
     return MCSampler(sample, init, refresh)
 
 
-def make_multistep(sampler: MCSampler, nstep: int, concat: bool = False):
+def make_multistep(sampler: MCSampler, n_step: int, concat: bool = False):
     sample_fn, init_fn, refresh_fn = sampler
-    multisample_fn = make_multistep_fn(sample_fn, nstep, concat)
+    multisample_fn = make_multistep_fn(sample_fn, n_step, concat)
     return MCSampler(multisample_fn, init_fn, refresh_fn)
 
 
-def make_multistep_fn(sample_fn, nstep, concat=False):
+def make_multistep_fn(sample_fn, n_step, concat=False):
     def multi_sample(key, params, state):
         inner = lambda s,k: sample_fn(k, params, s)
-        keys = jax.random.split(key, nstep)
+        keys = jax.random.split(key, n_step)
         new_state, data = lax.scan(inner, state, keys)
         if concat:
             data = tree_map(jnp.concatenate, data)
@@ -135,22 +146,19 @@ def make_metropolis(logdens_fn, sample_shape, sigma=0.05, steps=10):
         new_sample, new_logdens = new_state
         return new_state, (unravel(new_sample), new_logdens)
 
-    def init(key, params):
-        sigma, mu = 1., 0.
-        sample = jax.random.normal(key, (xsize,)) * sigma + mu
-        return refresh((sample,), params)
-
     def refresh(state, params):
         sample = state[0]
         ld_new = ravel_logd(params, sample)
         return (sample, ld_new)
+    
+    init = _make_init_from_refresh(refresh, xsize)
 
     return MCSampler(sample, init, refresh)
 
 
-def make_langevin(logdens_fn, sample_shape, tau=0.01, steps=10):
+def make_langevin(logdens_fn, sample_shape, tau=0.01, steps=10, grad_clipping=None):
     xsize, unravel = ravel_shape(sample_shape)
-    ravel_logd = lambda p, x: logdens_fn(p, unravel(x))
+    ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
     logd_and_grad = jax.value_and_grad(ravel_logd, 1)
 
     # log transition probability q(x2|x1)
@@ -174,22 +182,19 @@ def make_langevin(logdens_fn, sample_shape, tau=0.01, steps=10):
         new_sample, new_grads, new_logdens = new_state
         return new_state, (unravel(new_sample), new_logdens)
 
-    def init(key, params):
-        sigma, mu = 1., 0.
-        sample = jax.random.normal(key, (xsize,)) * sigma + mu
-        return refresh((sample,), params)
-
     def refresh(state, params):
         sample = state[0]
         ld_new, grads_new = logd_and_grad(params, sample)
         return (sample, grads_new.conj(), ld_new)
 
+    init = _make_init_from_refresh(refresh, xsize)
+
     return MCSampler(sample, init, refresh)
 
 
-def make_hamiltonian(logdens_fn, sample_shape, dt=0.1, length=1.):
+def make_hamiltonian(logdens_fn, sample_shape, dt=0.1, length=1., grad_clipping=None):
     xsize, unravel = ravel_shape(sample_shape)
-    ravel_logd = lambda p, x: logdens_fn(p, unravel(x))
+    ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
     logd_and_grad = jax.value_and_grad(ravel_logd, 1)
 
     def sample(key, params, state):
@@ -217,11 +222,11 @@ def make_hamiltonian(logdens_fn, sample_shape, dt=0.1, length=1.):
     return MCSampler(sample, init, refresh)
 
 
-def make_blackjax(logdens_fn, sample_shape, beta=1., kernel="nuts", **kwargs):
+def make_blackjax(logdens_fn, sample_shape, kernel="nuts", grad_clipping=None, **kwargs):
     from blackjax import hmc, nuts
     xsize, unravel = ravel_shape(sample_shape)
     inv_mass = 0.5 * jnp.ones(xsize)
-    ravel_logd = lambda p, x: beta * logdens_fn(p, unravel(x))
+    ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
     kmodule = {"hmc": hmc, "nuts": nuts}[kernel]
 
     def sample(key, params, state):
@@ -232,15 +237,12 @@ def make_blackjax(logdens_fn, sample_shape, beta=1., kernel="nuts", **kwargs):
         state, info = kernel.step(key, state)
         return (state.position, state), (unravel(state.position), -state.potential_energy)
 
-    def init(key, params):
-        sigma, mu = 1., 0.
-        sample = jax.random.normal(key, (xsize,)) * sigma + mu
-        return refresh((sample,), params)
-
     def refresh(state, params):
         sample = state[0]
         logprob_fn = partial(ravel_logd, params)
         return (sample, kmodule.init(sample, logprob_fn))
+
+    init = _make_init_from_refresh(refresh, xsize)
 
     return MCSampler(sample, init, refresh)
 
@@ -284,3 +286,18 @@ def make_leapfrog(potential_fn, dt, steps, with_carry=True):
         return leapfrog_carry(q, p, g, v)[:2]
 
     return leapfrog_carry if with_carry else leapfrog_nocarry
+
+
+def _make_init_from_refresh(refresh_fn, size, mu=0., sigma=1.):
+    def init(key, params):
+        sample = jax.random.normal(key, (size,)) * sigma + mu
+        return refresh_fn((sample,), params)
+    return init
+
+
+def _gclip(x, bnd):
+    if bnd is None:
+        return x
+    if isinstance(bnd, (int, float, Array)):
+        bnd = (-abs(bnd), abs(bnd))
+    return clip_gradient(x, *bnd)
