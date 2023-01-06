@@ -13,7 +13,7 @@
 # limitations under the License.
 #
 # this file is borrowed from deeperwin library
-# https://raw.githubusercontent.com/mdsunivie/deeperwin/master/src/deeperwin/curvature_tags_and_blocks.py
+# https://github.com/mdsunivie/deeperwin/blob/master/src/deeperwin/curvature_tags_and_blocks.py
 
 """Curvature blocks for FermiNet."""
 from typing import Any, Mapping, Optional, Sequence, Union
