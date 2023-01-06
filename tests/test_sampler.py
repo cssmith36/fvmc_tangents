@@ -50,14 +50,14 @@ def test_sampler_gaussian():
     shared_sampler_test(sampler)
 
 
-# @pytest.mark.slow
+@pytest.mark.slow
 @pytest.mark.parametrize("name", ["mcmc", "mala", "hmc", "black"])
 def test_sampler_distribution(name):
     sampler = make_test_sampler(name)
     shared_sampler_test(sampler)
 
 
-# @pytest.mark.slow
+@pytest.mark.slow
 def test_sampler_chained():
     mcmc = make_test_sampler("mcmc")
     mala = make_test_sampler("mala")
@@ -65,7 +65,7 @@ def test_sampler_chained():
     shared_sampler_test(sampler)
 
 
-# @pytest.mark.slow
+@pytest.mark.slow
 @pytest.mark.parametrize("name", ["hmc", "mala"])
 def test_sampler_grad_clipping(name):
     maker = choose_sampler_maker(name)
