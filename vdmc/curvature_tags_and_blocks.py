@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# this file is borrowed from deeperwin library
-# https://github.com/mdsunivie/deeperwin/blob/master/src/deeperwin/curvature_tags_and_blocks.py
+# this file is modified from ferminet library
+# https://github.com/deepmind/ferminet/blob/main/ferminet/curvature_tags_and_blocks.py
 
 """Curvature blocks for FermiNet."""
 from typing import Any, Mapping, Optional, Sequence, Union
@@ -40,8 +40,7 @@ def register_repeated_dense(y, x, w, b):
 class RepeatedDenseBlock(kfac_jax.DenseTwoKroneckerFactored):
     """Dense block that is repeatedly applied to multiple inputs (e.g. vmap)."""
 
-    @property
-    def scale(self) -> Union[float, jnp.ndarray]:
+    def fixed_scale(self) -> chex.Numeric:
         (x_shape,) = self.inputs_shapes
         return float(kfac_jax.utils.product(x_shape) // (x_shape[0] * x_shape[-1]))
 
@@ -55,14 +54,15 @@ class RepeatedDenseBlock(kfac_jax.DenseTwoKroneckerFactored):
         pmap_axis_name: Optional[str],
     ) -> kfac_jax.TwoKroneckerFactored.State:
         estimation_data = dict(**estimation_data)
-        (x,) = estimation_data["inputs"]
-        (dy,) = estimation_data["outputs_tangent"]
+        x, = estimation_data["inputs"]
+        dy, = estimation_data["outputs_tangent"]
         assert x.shape[0] == batch_size
         estimation_data["inputs"] = (x.reshape([-1, x.shape[-1]]),)
         estimation_data["outputs_tangent"] = (dy.reshape([-1, dy.shape[-1]]),)
         batch_size = x.size // x.shape[-1]
-        return super().update_curvature_matrix_estimate(state, estimation_data, ema_old, ema_new, batch_size, pmap_axis_name)
-
+        return super().update_curvature_matrix_estimate(
+            state, estimation_data, ema_old, ema_new, batch_size, pmap_axis_name)
+            
 
 def _dense(x: chex.Array, params: Sequence[chex.Array]) -> chex.Array:
     """Example of a dense layer function."""
@@ -72,8 +72,8 @@ def _dense(x: chex.Array, params: Sequence[chex.Array]) -> chex.Array:
 
 
 def _dense_parameter_extractor(
-    eqns: Sequence[jax.core.JaxprEqn],
-) -> Mapping[str, Any]:
+        eqns: Sequence[jax.core.JaxprEqn],
+    ) -> Mapping[str, Any]:
     """Extracts all parameters from the conv_general_dilated operator."""
     for eqn in eqns:
         if eqn.primitive.name == "dot_general":
@@ -91,7 +91,6 @@ _repeated_dense2_no_b = jax.vmap(_repeated_dense1_no_b, in_axes=[0, [None]])
 repeated_dense1_with_bias_pattern = kfac_jax.tag_graph_matcher.GraphPattern(
     name="repeated_dense1_with_bias",
     tag_primitive=repeated_dense_tag,
-    precedence=0,
     compute_func=_repeated_dense1,
     parameters_extractor_func=_dense_parameter_extractor,
     example_args=[np.zeros([9, 11, 13]), [np.zeros([13, 7]), np.zeros([7])]],
@@ -100,7 +99,6 @@ repeated_dense1_with_bias_pattern = kfac_jax.tag_graph_matcher.GraphPattern(
 repeated_dense1_no_bias_pattern = kfac_jax.tag_graph_matcher.GraphPattern(
     name="repeated_dense1_no_bias",
     tag_primitive=repeated_dense_tag,
-    precedence=0,
     compute_func=_repeated_dense1_no_b,
     parameters_extractor_func=_dense_parameter_extractor,
     example_args=[np.zeros([9, 11, 13]), [np.zeros([13, 7])]],
@@ -109,7 +107,6 @@ repeated_dense1_no_bias_pattern = kfac_jax.tag_graph_matcher.GraphPattern(
 repeated_dense2_with_bias_pattern = kfac_jax.tag_graph_matcher.GraphPattern(
     name="repeated_dense2_with_bias",
     tag_primitive=repeated_dense_tag,
-    precedence=0,
     compute_func=_repeated_dense2,
     parameters_extractor_func=_dense_parameter_extractor,
     example_args=[np.zeros([8, 9, 11, 13]), [np.zeros([13, 7]), np.zeros([7])]],
@@ -118,7 +115,6 @@ repeated_dense2_with_bias_pattern = kfac_jax.tag_graph_matcher.GraphPattern(
 repeated_dense2_no_bias_pattern = kfac_jax.tag_graph_matcher.GraphPattern(
     name="repeated_dense2_no_bias",
     tag_primitive=repeated_dense_tag,
-    precedence=0,
     compute_func=_repeated_dense2_no_b,
     parameters_extractor_func=_dense_parameter_extractor,
     example_args=[np.zeros([8, 9, 11, 13]), [np.zeros([13, 7])]],
