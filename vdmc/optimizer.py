@@ -50,7 +50,7 @@ class OptaxWrapper:
             optax_optimizer: optax.GradientTransformation,
             multi_device: bool = False,
             pmap_axis_name: str = "optax_axis",
-           batch_process_func: Optional[Callable[[Any], Any]] = None,
+            batch_process_func: Optional[Callable[[Any], Any]] = None,
     ):
         """Initializes the Optax wrapper.
 
@@ -137,7 +137,7 @@ class OptaxWrapper:
         new_params = optax.apply_updates(params, updates)
 
         # Add batch size
-        batch_size = jax.tree_leaves(batch)[0].shape[0]
+        batch_size = jax.tree_util.tree_leaves(batch)[0].shape[0]
         stats["batch_size"] = batch_size * jax.device_count()
 
         if self._value_func_has_state:
@@ -174,13 +174,13 @@ def make_lr_schedule(base=1e-4, decay_time=1e4, decay_power=1.):
 
 
 def make_optimizer(value_and_grad_func,
-                    name,
-                    lr_schedule=None,
-                    value_func_has_aux=False,
-                    value_func_has_state=False,
-                    value_func_has_rng=False,
-                    multi_device=False,
-                    **kwargs):
+                   name,
+                   lr_schedule=None,
+                   value_func_has_aux=False,
+                   value_func_has_state=False,
+                   value_func_has_rng=False,
+                   multi_device=False,
+                   **kwargs):
     # build lr schedule
     if lr_schedule is None:
         lr_schedule = {}
@@ -189,16 +189,16 @@ def make_optimizer(value_and_grad_func,
 
     if name == "kfac":
         const_schedule = {"decay_power": None, "decay_time": None}
-        momentum_schedule = {
+        momentum_schedule = make_lr_schedule(**{
             "base": kwargs.pop("momentum", 0.0),
             **const_schedule,
             **kwargs.pop("momentum_schedule", {})
-        }
-        damping_schedule = {
+        })
+        damping_schedule = make_lr_schedule(**{
             "base": kwargs.pop("damping", 1e-3),
             **const_schedule,
             **kwargs.pop("damping_schedule", {})
-        }
+        })
         options = {**KFAC_DEFAULTS, **kwargs}
         return kfac_jax.Optimizer(value_and_grad_func,
                                   value_func_has_aux=value_func_has_aux,

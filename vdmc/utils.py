@@ -14,8 +14,11 @@ import time
 from jax.numpy import ndarray as Array
 PyTree = Any
 
-_t_real = jnp.float32
-_t_cplx = jnp.complex64
+_t_real = float
+_t_cplx = complex
+
+# _t_real = jnp.float32
+# _t_cplx = jnp.complex64
 
 # _t_real = jnp.float64
 # _t_cplx = jnp.comple128
