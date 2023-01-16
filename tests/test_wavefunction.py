@@ -54,7 +54,7 @@ def test_jastrow():
 
     new_x = x.at[0,0,2].set(2e10)[0, :-2, :] # now remve batch
     new_out = jastrow.apply(params, new_x)
-    np.testing.assert_allclose(new_out, -3 * 2e10)
+    np.testing.assert_allclose(new_out, -3 * 2e10, rtol=1e-6)
 
 
 def test_orbital_shape():

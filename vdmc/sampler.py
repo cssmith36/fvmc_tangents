@@ -20,6 +20,7 @@ Flag = Union[int, str]
 
 
 class MCSampler(NamedTuple):
+    # to jit the sampler, use jax.tree_map(jax.jit, sampler)
     sample: Callable[[KeyArray, Params, State], Tuple[State, Data]]
     init: Callable[[KeyArray, Params], State]
     refresh: Callable[[State, Params], State]
@@ -30,7 +31,7 @@ class MCSampler(NamedTuple):
 
     def burn_in(self, key: KeyArray, params: Params, state: State, steps: int):
         """Burn in the state for given steps"""
-        inner = jax.jit(lambda s,k: (self.sample(k, params, s)[0], None))
+        inner = lambda s,k: (self.sample(k, params, s)[0], None)
         return lax.scan(inner, state, jax.random.split(key, steps))[0]
     
 

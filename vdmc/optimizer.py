@@ -17,7 +17,7 @@
 
 import kfac_jax
 import optax
-from typing import Optional, Any, Callable, Tuple, Mapping, Union
+from typing import Optional, Any, Callable, Tuple, Mapping, Union, Iterator
 import jax
 import jax.numpy as jnp
 from . import curvature_tags_and_blocks
@@ -150,13 +150,19 @@ class OptaxWrapper:
             params: kfac_jax.utils.Params,
             state: OptaxState,
             rng: jnp.ndarray,
-            batch: kfac_jax.utils.Batch,
+            data_iterator: Iterator[kfac_jax.utils.Batch] = None,
+            batch: kfac_jax.utils.Batch = None,
             func_state: Optional[kfac_jax.utils.FuncState] = None,
     ) -> Union[Tuple[kfac_jax.utils.Params, Any, kfac_jax.utils.FuncState,
                      Mapping[str, jnp.ndarray]],
                Tuple[kfac_jax.utils.Params, Any,
                      Mapping[str, jnp.ndarray]]]:
         """A step with similar interface to KFAC."""
+        if (data_iterator is None) == (batch is None):
+            raise ValueError("Exactly one of the arguments ``data_iterator`` and "
+                       "``batch`` must be provided.")
+        if data_iterator is not None:
+            batch = next(data_iterator)
         result = self._jit_step(
             params=params,
             state=state,
