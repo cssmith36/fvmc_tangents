@@ -44,8 +44,8 @@ _key0 = jax.random.PRNGKey(0)
 
 
 def test_jastrow():
-    ions, charges, x = make_collapse_conf()
-    jastrow = Jastrow(ions, charges)
+    ions, elems, x = make_collapse_conf()
+    jastrow = Jastrow(ions, elems)
     params = jastrow.init(_key0, x)
     
     actual_out = jastrow.apply(params, x)
@@ -58,7 +58,7 @@ def test_jastrow():
 
 
 def test_orbital_shape():
-    ions, charges, x = make_collapse_conf()
+    ions, elems, x = make_collapse_conf()
     n_batch, n_el = x.shape[:-1]
     n_orb = 7
     orbital = SimpleOrbital(ions, n_orb, n_hidden=1)
@@ -70,9 +70,9 @@ def test_orbital_shape():
 
 @pytest.mark.parametrize("full_det,spin", [(True, None), (False, 1)])
 def test_slater_antisymm(full_det, spin):
-    ions, charges, x = make_collapse_conf()
+    ions, elems, x = make_collapse_conf()
     n_batch, n_el = x.shape[:-1]
-    slater = Slater(ions, charges, full_det=full_det, orbital_args={"n_hidden": 1})
+    slater = Slater(ions, elems, full_det=full_det, orbital_args={"n_hidden": 1})
     params = slater.init(_key0, x)
 
     iperm = jnp.arange(n_el, dtype=int).at[:2].set([1,0])
@@ -86,10 +86,10 @@ def test_slater_antisymm(full_det, spin):
 
 
 def test_jastrow_slater():
-    ions, charges, x = make_collapse_conf()
+    ions, elems, x = make_collapse_conf()
     x = x[0]
     n_el = x.shape[0]
-    model = make_jastrow_slater(ions, charges, None, full_det=True, orbital_args={"n_hidden": 1})
+    model = make_jastrow_slater(ions, elems, None, full_det=True, orbital_args={"n_hidden": 1})
     params = model.init(_key0, x)
     subp0 = {"params": params["params"]["submodels_0"]}
     subp1 = {"params": params["params"]["submodels_1"]}

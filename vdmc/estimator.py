@@ -28,7 +28,7 @@ def clip_around(a, target, half_range, stop_gradient=True):
     return jnp.clip(a, c_min, c_max)
 
 
-def make_eval_local(model, ions, charges):
+def make_eval_local(model, ions, elems):
     """create a function that evaluates local energy, sign and log abs of wavefunction.
     
     The created function will calculate these quantities for both ket and bra (conjugated),
@@ -38,7 +38,7 @@ def make_eval_local(model, ions, charges):
         model (nn.Module): a flax module that calculates the sign and log abs of wavefunction.
             `model.apply` should have signature (params, x) -> (sign(f(x)), log|f(x)|)
         ions (Array): the position of ions.
-        charges (Array): the charges of those ions.
+        elems (Array): the element indices (charges) of those ions.
 
     Returns:
         Callable with signature (params, x) -> (eloc, sign, logf) that evaluates 
@@ -48,7 +48,7 @@ def make_eval_local(model, ions, charges):
     def eval_local(params, x):
         log_psi_fn = ith_output(partial(model.apply, params), 1)
         eloc = (calc_kinetic_energy(log_psi_fn, x) 
-                + calc_potential_energy(ions, charges, x))
+                + calc_potential_energy(ions, elems, x))
         sign, logf = model.apply(params, x)
         return (jnp.stack([eloc, eloc.conj()], -1),
                 jnp.stack([sign, sign.conj()], -1),

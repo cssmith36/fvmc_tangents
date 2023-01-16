@@ -23,15 +23,15 @@ class Jastrow(nn.Module):
     """
 
     ions : Array
-    charges : Array
+    elems : Array
 
     @nn.compact
     def __call__(self, x: Array) -> Array:
         # calculate initial scale, so that it returns 0 if all electrons are on ions
-        cmat = jnp.expand_dims(self.charges, -1) * jnp.expand_dims(self.charges, -2)
+        cmat = jnp.expand_dims(self.elems, -1) * jnp.expand_dims(self.elems, -2)
         scale = 0.5 * jnp.sum(pdist(self.ions) * cmat)
         # make z and q parameters
-        z = self.param("z", fix_init, self.charges, _t_real)
+        z = self.param("z", fix_init, self.elems, _t_real)
         q = self.param("q", fix_init, 1.0, _t_real)
         # distance matrices
         r_ei = cdist(x, self.ions)
@@ -80,7 +80,7 @@ class Slater(nn.Module):
     """
 
     ions : Array
-    charges : Array
+    elems : Array
     spin : Optional[int] = None # difference between alpha and beta spin
     full_det : bool = True
     orbital_type : str = "simple"
@@ -147,10 +147,10 @@ class ProductModel(nn.Module):
             return logf
 
 
-def make_jastrow_slater(ions, charges, spin=None, 
+def make_jastrow_slater(ions, elems, spin=None, 
         full_det=True, orbital_type="simple", orbital_args=None):
-    jastrow = Jastrow(ions, charges)
-    slater = Slater(ions, charges, spin, full_det, orbital_type, orbital_args)
+    jastrow = Jastrow(ions, elems)
+    slater = Slater(ions, elems, spin, full_det, orbital_type, orbital_args)
     model = ProductModel([jastrow, slater])
     return model
     

@@ -29,8 +29,8 @@ def make_dummy_model(apply_fn):
 def test_eval_local_shape():
     f, logf = make_test_log_f()
     model = make_dummy_model(get_sign_log(f))
-    ions, charges = make_test_ions()
-    eval_local = make_eval_local(model, ions, charges)
+    ions, elems = make_test_ions()
+    eval_local = make_eval_local(model, ions, elems)
     
     a = None
     x = make_test_x()

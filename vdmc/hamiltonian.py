@@ -22,11 +22,11 @@ def calc_coulomb_2(pos_a, charge_a, pos_b, charge_b):
     return coulomb.sum((-1,-2))
 
 
-def calc_potential_energy(ions, charges, x):
+def calc_potential_energy(ions, elems, x):
     # x is electron positions
     el_el = calc_coulomb(x, -1)
-    el_ion = calc_coulomb_2(x, -1, ions, charges)
-    ion_ion = calc_coulomb(ions, charges)
+    el_ion = calc_coulomb_2(x, -1, ions, elems)
+    ion_ion = calc_coulomb(ions, elems)
     return el_el + el_ion + ion_ion
 
 
@@ -61,8 +61,8 @@ def calc_kinetic_energy(log_psi, x):
     return -0.5 * lapl_fn(x)
 
 
-def calc_local_energy(log_psi, ions, charges, x):
+def calc_local_energy(log_psi, ions, elems, x):
     ke = calc_kinetic_energy(log_psi, x) 
-    pe = calc_potential_energy(ions, charges, x)
+    pe = calc_potential_energy(ions, elems, x)
     return ke + pe
     
