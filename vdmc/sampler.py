@@ -16,12 +16,13 @@ Params = PyTree
 Sample = PyTree
 State = Tuple[Sample, ...] # first element of state is always current sample
 Data = Tuple[Sample, Array] # data is a tuple of sample and its log prob
+Info = Dict[str, PyTree] # info is a dict containing stats of the sampling process
 Flag = Union[int, str]
 
 
 class MCSampler(NamedTuple):
     # to jit the sampler, use jax.tree_map(jax.jit, sampler)
-    sample: Callable[[KeyArray, Params, State], Tuple[State, Data]]
+    sample: Callable[[KeyArray, Params, State], Tuple[State, Data, Info]]
     init: Callable[[KeyArray, Params], State]
     refresh: Callable[[State, Params], State]
 
@@ -65,10 +66,10 @@ def make_batched(sampler: MCSampler, n_batch: int, concat: bool = False):
     sample_fn, init_fn, refresh_fn = sampler
     def sample(key, params, state):
         vkey = jax.random.split(key, n_batch)
-        new_state, data = jax.vmap(sample_fn, (0, None, 0))(vkey, params, state)
+        new_state, *res = jax.vmap(sample_fn, (0, None, 0))(vkey, params, state)
         if concat:
-            data = tree_map(jnp.concatenate, data)
-        return new_state, data
+            res = tree_map(jnp.concatenate, res)
+        return new_state, *res
     def init(key, params):
         vkey = jax.random.split(key, n_batch)
         return jax.vmap(init_fn, (0, None))(vkey, params)
@@ -83,23 +84,27 @@ def make_multistep(sampler: MCSampler, n_step: int, concat: bool = False):
 
 
 def make_multistep_fn(sample_fn, n_step, concat=False):
+    def _split_output(out): # to satisfy scan requirement
+        return out[0], out[1:]
     def multi_sample(key, params, state):
-        inner = lambda s,k: sample_fn(k, params, s)
+        inner = lambda s,k: _split_output(sample_fn(k, params, s))
         keys = jax.random.split(key, n_step)
-        new_state, data = lax.scan(inner, state, keys)
+        new_state, res = lax.scan(inner, state, keys)
         if concat:
-            data = tree_map(jnp.concatenate, data)
-        return new_state, data
+            res = tree_map(jnp.concatenate, res)
+        return new_state, *res
     return multi_sample
 
 
 def make_chained(*samplers):
     init = samplers[-1].init
     def sample(key, params, state):
-        for splr in samplers:
+        info = {}
+        for ii, splr in enumerate(samplers):
             state = splr.refresh(state, params)
-            state, data = splr.sample(key, params, state)
-        return state, data
+            state, data, infoi = splr.sample(key, params, state)
+            info[f"part_{ii}"] = infoi
+        return state, data, info
     def refresh(state, params):
         return state
     return MCSampler(sample, init, refresh)
@@ -109,6 +114,7 @@ def make_chained(*samplers):
 
 def make_gaussian(logdens_fn, sample_shape, mu=0., sigma=1., truncate=None):
     xsize, unravel = ravel_shape(sample_shape)
+    info = {"is_accepted": True}
 
     def sample(key, params, state):
         if truncate is not None:
@@ -118,7 +124,7 @@ def make_gaussian(logdens_fn, sample_shape, mu=0., sigma=1., truncate=None):
             rawgs = jax.random.normal(key, (xsize,))
         new_sample = rawgs * sigma + mu
         new_logdens = logd_gaussian(new_sample, mu, sigma).sum()
-        return (new_sample,), (unravel(new_sample), new_logdens)
+        return (new_sample,), (unravel(new_sample), new_logdens), info
     
     def init(key, params):
         return (jnp.zeros((xsize,)),)
@@ -145,7 +151,8 @@ def make_metropolis(logdens_fn, sample_shape, sigma=0.05, steps=10):
         multi_step = make_multistep_fn(step, steps, concat=False)
         new_state, accepted = multi_step(key, params, state)
         new_sample, new_logdens = new_state
-        return new_state, (unravel(new_sample), new_logdens)
+        info = {"is_accepted": accepted.mean()}
+        return new_state, (unravel(new_sample), new_logdens), info
 
     def refresh(state, params):
         sample = state[0]
@@ -181,7 +188,8 @@ def make_langevin(logdens_fn, sample_shape, tau=0.01, steps=10, grad_clipping=No
         multi_step = make_multistep_fn(step, steps, concat=False)
         new_state, accepted = multi_step(key, params, state)
         new_sample, new_grads, new_logdens = new_state
-        return new_state, (unravel(new_sample), new_logdens)
+        info = {"is_accepted": accepted.mean()}
+        return new_state, (unravel(new_sample), new_logdens), info
 
     def refresh(state, params):
         sample = state[0]
@@ -208,7 +216,8 @@ def make_hamiltonian(logdens_fn, sample_shape, dt=0.1, length=1., grad_clipping=
         g2, ld2 = -f2, -v2
         ratio = (logd_gaussian(-p2).sum(-1)+ld2) - (logd_gaussian(p1).sum(-1)+ld1)
         (qn, gn, ldn), accepted = mh_select(ukey, ratio, state, (q2, g2, ld2))
-        return (qn, gn, ldn), (unravel(qn), ldn)
+        info = {"is_accepted": accepted}
+        return (qn, gn, ldn), (unravel(qn), ldn), info
 
     def init(key, params):
         sigma, mu = 1., 0.
@@ -236,7 +245,7 @@ def make_blackjax(logdens_fn, sample_shape, kernel="nuts", grad_clipping=None, *
             inverse_mass_matrix=inv_mass, **kwargs)
         state = state[1]
         state, info = kernel.step(key, state)
-        return (state.position, state), (unravel(state.position), -state.potential_energy)
+        return (state.position, state), (unravel(state.position), -state.potential_energy), info._asdict()
 
     def refresh(state, params):
         sample = state[0]

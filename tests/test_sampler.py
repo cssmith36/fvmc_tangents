@@ -38,7 +38,7 @@ def shared_sampler_test(sampler, jit=True):
 
     state = sampler.init(key1, params)
     state = sampler.burn_in(key2, params, state, _nburn)
-    state, (sample, logprob) = sampler.sample(key3, params, state)
+    state, (sample, logprob), info = sampler.sample(key3, params, state)
     state = sampler.refresh(sample, params)
 
     assert sample.shape == (_nstep, _nchain, _xshape)
