@@ -17,7 +17,7 @@
 
 import kfac_jax
 import optax
-from typing import Optional, Any, Callable, Tuple, Mapping, Union, Iterator
+from typing import Optional, Any, Callable, Tuple, Mapping, Union, Iterator, NamedTuple
 import jax
 import jax.numpy as jnp
 from . import curvature_tags_and_blocks
@@ -37,6 +37,22 @@ KFAC_DEFAULTS = dict(
     min_damping=1e-4,
     curvature_ema=0.95,
 )
+
+
+def counter_transform() -> optax.GradientTransformation:
+    """increase counter and do nothing to gradients"""
+
+    def init_fn(params):
+        del params
+        return optax.ScaleByScheduleState(count=jnp.zeros([], jnp.int32))
+
+    def update_fn(updates, state, params=None):
+        del params
+        return updates, optax.ScaleByScheduleState(
+            count=optax.safe_int32_increment(state.count))
+
+    return optax.GradientTransformation(init_fn, update_fn)
+
 
 class OptaxWrapper:
     """Wrapper class for Optax optimizers to have the same interface as KFAC.
@@ -79,7 +95,7 @@ class OptaxWrapper:
         self._value_func_has_aux = value_func_has_aux
         self._value_func_has_state = value_func_has_state
         self._value_func_has_rng = value_func_has_rng
-        self._optax_optimizer = optax_optimizer
+        self._optax_optimizer = optax.chain(optax_optimizer, counter_transform())
         self._batch_process_func = batch_process_func or (lambda x: x)
         self._multi_device = multi_device
         self._pmap_axis_name = pmap_axis_name
@@ -136,9 +152,11 @@ class OptaxWrapper:
         updates, new_state = self._optax_optimizer.update(grads, state, params)
         new_params = optax.apply_updates(params, updates)
 
-        # Add batch size
+        # Add step and batch size info
+        stats["step"] = new_state[-1].count
         batch_size = jax.tree_util.tree_leaves(batch)[0].shape[0]
         stats["batch_size"] = batch_size * jax.device_count()
+        stats["data_seen"] = stats["batch_size"] * stats["step"]
 
         if self._value_func_has_state:
             return new_params, new_state, new_func_state, stats
