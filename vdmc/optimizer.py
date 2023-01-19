@@ -39,19 +39,19 @@ KFAC_DEFAULTS = dict(
 )
 
 
-def counter_transform() -> optax.GradientTransformation:
-    """increase counter and do nothing to gradients"""
+# def counter_transform() -> optax.GradientTransformation:
+#     """increase counter and do nothing to gradients"""
 
-    def init_fn(params):
-        del params
-        return optax.ScaleByScheduleState(count=jnp.zeros([], jnp.int32))
+#     def init_fn(params):
+#         del params
+#         return optax.ScaleByScheduleState(count=jnp.zeros([], jnp.int32))
 
-    def update_fn(updates, state, params=None):
-        del params
-        return updates, optax.ScaleByScheduleState(
-            count=optax.safe_int32_increment(state.count))
+#     def update_fn(updates, state, params=None):
+#         del params
+#         return updates, optax.ScaleByScheduleState(
+#             count=optax.safe_int32_increment(state.count))
 
-    return optax.GradientTransformation(init_fn, update_fn)
+#     return optax.GradientTransformation(init_fn, update_fn)
 
 
 class OptaxWrapper:
@@ -60,13 +60,15 @@ class OptaxWrapper:
     def __init__(
             self,
             value_and_grad_func: kfac_jax.optimizer.ValueAndGradFunc,
-            value_func_has_aux: bool,
-            value_func_has_state: bool,
-            value_func_has_rng: bool,
-            optax_optimizer: optax.GradientTransformation,
+            optax_factory: Callable[..., optax.GradientTransformation],
+            learning_rate: optax.ScalarOrSchedule,
+            value_func_has_aux: bool = False,
+            value_func_has_state: bool = False,
+            value_func_has_rng: bool = False,
             multi_device: bool = False,
             pmap_axis_name: str = "optax_axis",
             batch_process_func: Optional[Callable[[Any], Any]] = None,
+            **optax_kwargs
     ):
         """Initializes the Optax wrapper.
 
@@ -77,6 +79,10 @@ class OptaxWrapper:
               loss, loss_grads = value_and_grad_func(params, batch)
             If `value_func_has_aux` is `True` then the interface should be:
               (loss, aux), loss_grads = value_and_grad_func(params, batch)
+          optax_factory: Python Callable. A function that returns an optax gradient 
+            transform. It should take `learning_rate` as one of its arguments.
+            The function will be warpped by optax.inject_hyperparams.
+          learning_rate: Scalar or a callable schedule. A global scaling factor.
           value_func_has_aux: Boolean. Specifies whether the provided callable
             `value_and_grad_func` returns the loss value only, or also some
             auxiliary data. (Default: `False`)
@@ -86,16 +92,16 @@ class OptaxWrapper:
           value_func_has_rng: Boolean. Specifies whether the provided callable
             `value_and_grad_func` additionally takes as input an rng key. (Default:
             `False`)
-          optax_optimizer: The optax optimizer to be wrapped.
           batch_process_func: Callable. A function which to be called on each batch
             before feeding to the KFAC on device. This could be useful for specific
             device input optimizations. (Default: `None`)
+          **optax_kwargs: additional parameters that will be passed to `optax_factory`.
         """
         self._value_and_grad_func = value_and_grad_func
         self._value_func_has_aux = value_func_has_aux
         self._value_func_has_state = value_func_has_state
         self._value_func_has_rng = value_func_has_rng
-        self._optax_optimizer = optax.chain(optax_optimizer, counter_transform())
+        self._optax_optimizer = optax.inject_hyperparams(optax_factory)(learning_rate=learning_rate, **optax_kwargs)
         self._batch_process_func = batch_process_func or (lambda x: x)
         self._multi_device = multi_device
         self._pmap_axis_name = pmap_axis_name
@@ -153,7 +159,8 @@ class OptaxWrapper:
         new_params = optax.apply_updates(params, updates)
 
         # Add step and batch size info
-        stats["step"] = new_state[-1].count
+        stats["step"] = new_state.count
+        stats["learning_rate"] = new_state.hyperparams["learning_rate"]
         batch_size = jax.tree_util.tree_leaves(batch)[0].shape[0]
         stats["batch_size"] = batch_size * jax.device_count()
         stats["data_seen"] = stats["batch_size"] * stats["step"]
@@ -239,12 +246,14 @@ def make_optimizer(value_and_grad_func,
                                   )
     else:
         from optax._src import alias as optax_alias
-        opt_fn = getattr(optax_alias, name)
-        optax_optimizer = opt_fn(lr_schedule, **kwargs)
+        opt_factory = getattr(optax_alias, name)
+        # optax_optimizer = opt_fn(lr_schedule, **kwargs)
         return OptaxWrapper(value_and_grad_func,
+                            optax_factory=opt_factory,
+                            learning_rate=lr_schedule,
                             value_func_has_aux=value_func_has_aux,
                             value_func_has_state=value_func_has_state,
                             value_func_has_rng=value_func_has_rng,
                             multi_device=multi_device,
                             pmap_axis_name=paxis.name,
-                            optax_optimizer=optax_optimizer)
+                            **kwargs)
