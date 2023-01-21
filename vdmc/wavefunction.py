@@ -149,6 +149,7 @@ class ProductModel(nn.Module):
 
 def make_jastrow_slater(ions, elems, spin=None, 
         full_det=True, orbital_type="simple", orbital_args=None):
+    orbital_args = orbital_args or {}
     jastrow = Jastrow(ions, elems)
     slater = Slater(ions, elems, spin, full_det, orbital_type, orbital_args)
     model = ProductModel([jastrow, slater])

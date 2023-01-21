@@ -13,6 +13,8 @@ from . import (
     sampler,
     estimator,
     optimizer,
+    config,
+    train,
 )
 
 # __all__ = [
@@ -22,6 +24,8 @@ from . import (
 #     "sampler",
 #     "estimator",
 #     "optimizer",
+#     "config",
+#     "train"
 # ]
 
 # def __getattr__(name):

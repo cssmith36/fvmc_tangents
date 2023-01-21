@@ -10,6 +10,7 @@ from functools import partial, reduce
 import dataclasses
 import pickle
 import time
+import os
 
 from jax.numpy import ndarray as Array
 PyTree = Any
@@ -162,6 +163,15 @@ def load_pickle(filename):
     with open(filename, 'rb') as file:
         return pickle.load(file)
 
+def save_checkpoint(filename, data, keep=1):
+    numlen = len(str(keep))
+    fnames = [filename]
+    fnames += [f"{filename}.{ii:0{numlen}d}" for ii in range(1, keep)]
+    for ii, fn in reversed(list(enumerate(fnames[:-1]))):
+        if os.path.exists(fn):
+            os.replace(fn, fnames[ii+1])
+    save_pickle(filename, data)
+
 
 def cfg_to_dict(cfg):
     if not isinstance(cfg, ConfigDict):
@@ -234,17 +244,17 @@ class Printer:
         self.header = "\t".join(self.fields.keys())
         self.format = "\t".join(f"{{{k}:{v}}}" for k, v in self.fields.items())
         self.kwargs = print_kwargs
-        self.tick = time.perf_counter()
+        self._tick = time.perf_counter()
 
     def print_header(self, prefix: str = ""):
         print(prefix+self.header, **self.kwargs)
 
     def print_fields(self, field_dict: Dict[str, Any], prefix: str = ""):
-        output = self.format.format(**field_dict, time=time.perf_counter()-self.tick)
+        output = self.format.format(**field_dict, time=time.perf_counter()-self._tick)
         print(prefix+output, **self.kwargs)
 
     def reset_timer(self):
-        self.tick = time.perf_counter()
+        self._tick = time.perf_counter()
 
 
 def wrap_if_pmap(p_func):
