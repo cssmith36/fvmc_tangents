@@ -6,6 +6,8 @@ def default() -> ConfigDict:
         
         "seed": 0,
 
+        "logging_level": "WARNING",
+
         "restart": {
             "params": None,
             "states": None,

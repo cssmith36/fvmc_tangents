@@ -1,9 +1,10 @@
-import jax 
+import jax
 from jax import numpy as jnp
 from ml_collections import ConfigDict
 from tensorboardX import SummaryWriter
 from typing import NamedTuple, Tuple
 
+from . import LOGGER
 from .utils import PyTree, Array
 from .utils import Printer, save_checkpoint, load_pickle
 from .utils import paxis
@@ -54,6 +55,8 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, key=None, restart_
     # make sampler
     n_sample = sample_cfg.size
     n_chain = sample_cfg.chains or n_sample
+    if n_chain % n_sample != 0:
+        LOGGER.warning("Sample size not divisible by batch size, rounding up")
     n_multistep = -(-n_sample // n_chain)
     n_batch = n_chain # TODO when parallel, this is the chains on a local device
     raw_sampler = make_sampler(ansatz, tot_elec, **sample_cfg.sampler)
@@ -76,13 +79,16 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, key=None, restart_
     # TODO add logging because these can be slow
     # TODO parallel initialize is different
     if "states" in restart_cfg and restart_cfg.states:
+        LOGGER.info("Loading parameters and states from saved file")
         train_state = TrainingState(**load_pickle(restart_cfg.states))
     else:
+        LOGGER.info("Initializing parameters and states")
         assert key is not None, \
             "key is required if not restarting from previous state"
         key, parkey, mckey, optkey, statekey = jax.random.split(key, 5)
         # initialize params
         if "params" in restart_cfg and restart_cfg.params:
+            LOGGER.info("Loading parameters from saved file")
             params = load_pickle(restart_cfg.params)
             if isinstance(params, tuple): params = params[1]
         else:
@@ -91,6 +97,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, key=None, restart_
         # initialize mc state
         mc_state = sampler.init(mckey, params)
         if "burn_in" in sample_cfg and sample_cfg.burn_in > 0:
+            LOGGER.info(f"Burning in the sampler for {sample_cfg.burn_in} steps")
             key, subkey = jax.random.split(key)
             mc_state = sampler.burn_in(subkey, params, mc_state, sample_cfg.burn_in)
         key, subkey = jax.random.split(key)
@@ -126,6 +133,7 @@ def train(step_fn, train_state, iterations, log_cfg):
                     "acc": ".2f", "lr": ".2e"} 
     printer = Printer(print_fields, time_format=".2f")
 
+    LOGGER.info("Start training")
     printer.print_header("# ")
     for ii in range(iterations + 1):
         printer.reset_timer()
@@ -153,9 +161,16 @@ def train(step_fn, train_state, iterations, log_cfg):
 
 def main(cfg):
     cfg = ConfigDict(cfg)
+
+    import logging
+    logging_level = getattr(logging, cfg.logging_level.upper())
+    LOGGER.setLevel(logging_level)
+
     key = jax.random.PRNGKey(cfg.seed) if 'seed' in cfg else None
     system, ansatz, loss_fn, sampler, optimizer, train_state \
         = prepare(cfg.system, cfg.ansatz, cfg.sample, cfg.optimize, key, cfg.restart)
+
     training_step = gen_training_step(sampler, optimizer)
     train_state = train(training_step, train_state, cfg.optimize.iterations, cfg.log)
+    
     return train_state
