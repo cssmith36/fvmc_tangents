@@ -25,7 +25,7 @@ def default() -> ConfigDict:
         "sample": {
             "size": 2048,
             "chains": None,
-            "burn_in": 0,
+            "burn_in": 100,
             "sampler": {
                 "name": "mcmc",
             }
@@ -46,6 +46,7 @@ def default() -> ConfigDict:
             "ckpt_path": "checkpoint.pkl",
             "ckpt_every": 100,
             "ckpt_keep": 5,
+            "hpar_path": "hparams.yaml",
         },
 
     })

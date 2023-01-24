@@ -6,7 +6,7 @@ from typing import NamedTuple, Tuple
 
 from . import LOGGER
 from .utils import PyTree, Array
-from .utils import Printer, save_checkpoint, load_pickle
+from .utils import Printer, save_checkpoint, load_pickle, cfg_to_yaml
 from .utils import paxis
 from .wavefunction import make_jastrow_slater
 from .sampler import make_sampler, make_batched, make_multistep
@@ -80,7 +80,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, key=None, restart_
     # TODO parallel initialize is different
     if "states" in restart_cfg and restart_cfg.states:
         LOGGER.info("Loading parameters and states from saved file")
-        train_state = TrainingState(**load_pickle(restart_cfg.states))
+        train_state = TrainingState(*load_pickle(restart_cfg.states))
     else:
         LOGGER.info("Initializing parameters and states")
         assert key is not None, \
@@ -118,6 +118,7 @@ def gen_training_step(sampler, optimizer):
         key, mckey, optkey = jax.random.split(key, 3)
         mc_state, data, mc_info = sampler.sample(mckey, params, mc_state)
         params, opt_state, opt_info = optimizer.step(params, opt_state, optkey, batch=data)
+        mc_state = sampler.refresh(mc_state, params)
         return TrainingState(key, params, mc_state, opt_state), (mc_info, opt_info)
 
     return training_step
@@ -161,6 +162,10 @@ def train(step_fn, train_state, iterations, log_cfg):
 
 def main(cfg):
     cfg = ConfigDict(cfg)
+
+    if "hpar_path" in cfg.log:
+            with open(cfg.log.hpar_path, "w") as hpfile:
+                print(cfg_to_yaml(cfg), file=hpfile)
 
     import logging
     logging_level = getattr(logging, cfg.logging_level.upper())
