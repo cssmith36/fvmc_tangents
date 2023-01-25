@@ -45,7 +45,7 @@ def default() -> ConfigDict:
             "stat_every": 100,
             "ckpt_path": "checkpoint.pkl",
             "ckpt_every": 100,
-            "ckpt_keep": 5,
+            "ckpt_keep": 1,
             "hpar_path": "hparams.yaml",
         },
 

@@ -124,7 +124,7 @@ def gen_training_step(sampler, optimizer):
     return training_step
 
 
-def train(step_fn, train_state, iterations, log_cfg):
+def run(step_fn, train_state, iterations, log_cfg):
     """run the optimization loop (sample + update)"""
 
     log_cfg = ConfigDict(log_cfg)
@@ -133,6 +133,9 @@ def train(step_fn, train_state, iterations, log_cfg):
                     "avg_s": ".4f", "var_e": ".3e", 
                     "acc": ".2f", "lr": ".2e"} 
     printer = Printer(print_fields, time_format=".2f")
+
+    # mysterious step to prevent kfac memory error
+    train_state = jax.tree_map(jnp.copy, train_state)
 
     LOGGER.info("Start training")
     printer.print_header("# ")
@@ -176,6 +179,6 @@ def main(cfg):
         = prepare(cfg.system, cfg.ansatz, cfg.sample, cfg.optimize, key, cfg.restart)
 
     training_step = gen_training_step(sampler, optimizer)
-    train_state = train(training_step, train_state, cfg.optimize.iterations, cfg.log)
+    train_state = run(training_step, train_state, cfg.optimize.iterations, cfg.log)
     
     return train_state
