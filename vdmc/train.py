@@ -139,14 +139,14 @@ def run(step_fn, train_state, iterations, log_cfg):
 
     LOGGER.info("Start training")
     printer.print_header("# ")
-    for ii in range(iterations + 1):
+    for ii in range(iterations):
         printer.reset_timer()
 
         # main training loop
         train_state, (mc_info, opt_info) = step_fn(train_state)
 
         # log stats
-        if ii % log_cfg.stat_every == 0:
+        if ii % log_cfg.stat_every == 0 or ii == iterations-1:
             acc_rate = paxis.all_mean(mc_info["is_accepted"])
             stat_dict = {"step": opt_info["step"]-1, **opt_info["aux"], 
                          "acc": acc_rate, "lr":opt_info["learning_rate"]}
@@ -155,7 +155,7 @@ def run(step_fn, train_state, iterations, log_cfg):
                 writer.add_scalar(k, v, ii)
         
         # checkpoint
-        if ii % log_cfg.ckpt_every == 0:
+        if ii % log_cfg.ckpt_every == 0 or ii == iterations-1:
             save_checkpoint(log_cfg.ckpt_path, tuple(train_state), 
                             keep=log_cfg.ckpt_keep)
     
