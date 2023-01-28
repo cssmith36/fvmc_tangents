@@ -6,7 +6,7 @@ import numpy as np
 from jax import numpy as jnp
 
 from vdmc.utils import pdist
-from vdmc.wavefunction import Jastrow, SimpleOrbital, Slater, make_jastrow_slater
+from vdmc.wavefunction import Jastrow, SimpleOrbital, Slater, build_jastrow_slater
 
 
 def make_collapse_conf():
@@ -89,7 +89,7 @@ def test_jastrow_slater():
     ions, elems, x = make_collapse_conf()
     x = x[0]
     n_el = x.shape[0]
-    model = make_jastrow_slater(ions, elems, None, full_det=True, orbital_args={"n_hidden": 1})
+    model = build_jastrow_slater(ions, elems, None, full_det=True, orbital_args={"n_hidden": 1})
     params = model.init(_key0, x)
     subp0 = {"params": params["params"]["submodels_0"]}
     subp1 = {"params": params["params"]["submodels_1"]}

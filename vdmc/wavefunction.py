@@ -6,7 +6,7 @@ from dataclasses import field as _field
 
 from .utils import Array
 from .utils import diffmat, cdist, pdist, fix_init, _t_real
-from .utils import make_mlp
+from .utils import build_mlp
 
 
 # follow the TwoBodyExpDecay class in vmcnet
@@ -59,7 +59,7 @@ class SimpleOrbital(nn.Module):
         n_el = x.shape[-2]
         n_ion = self.ions.shape[-2]
         n_feature = n_ion * 4
-        resnet = make_mlp(
+        resnet = build_mlp(
             [n_feature]*self.n_hidden + [self.n_orb], 
             residual=True, activation=self.activation, param_dtype=_t_real)
         # build input features
@@ -147,7 +147,7 @@ class ProductModel(nn.Module):
             return logf
 
 
-def make_jastrow_slater(ions, elems, spin=None, 
+def build_jastrow_slater(ions, elems, spin=None, 
         full_det=True, orbital_type="simple", orbital_args=None):
     orbital_args = orbital_args or {}
     jastrow = Jastrow(ions, elems)

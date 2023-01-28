@@ -88,7 +88,7 @@ def cdist(xa, xb):
     return dist
 
 
-def make_moving_avg(decay=0.99, early_growth=True):
+def build_moving_avg(decay=0.99, early_growth=True):
     def moving_avg(acc, new, i):
         if early_growth:
             iteration_decay = jnp.minimum(decay, (1.0 + i) / (10.0 + i))
@@ -222,7 +222,7 @@ class Serial(nn.Module):
         return x
 
 
-def make_mlp(
+def build_mlp(
     layer_sizes : Sequence[int],
     residual : bool = True,
     activation : Union[str, Callable] = "gelu",

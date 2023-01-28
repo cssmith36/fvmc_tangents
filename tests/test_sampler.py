@@ -3,7 +3,7 @@ import jax
 import numpy as np
 from jax import numpy as jnp
 
-from vdmc.sampler import choose_sampler_maker, make_batched, make_multistep, make_chained
+from vdmc.sampler import choose_sampler_builder, make_batched, make_multistep, make_chained
 
 
 _mean = 0.5
@@ -19,7 +19,7 @@ _key0 = jax.random.PRNGKey(0)
 
 
 def make_test_sampler(name):
-    maker = choose_sampler_maker(name)
+    maker = choose_sampler_builder(name)
     if name == "gaussian":
         sampler = maker(_logprob_fn, _xshape, mu=_mean, sigma=_std)
     elif name == "black":
@@ -71,7 +71,7 @@ def test_sampler_chained():
 @pytest.mark.slow
 @pytest.mark.parametrize("name", ["hmc", "mala"])
 def test_sampler_grad_clipping(name):
-    maker = choose_sampler_maker(name)
+    maker = choose_sampler_builder(name)
     sampler = maker(_logprob_fn, _xshape, grad_clipping=0.5)
     sampler = make_multistep(make_batched(sampler, _nchain, concat=False), _nstep, concat=False)
     shared_sampler_test(sampler, jit=True)

@@ -5,7 +5,7 @@ import jax
 import numpy as np
 from jax import numpy as jnp
 
-from vdmc.estimator import make_eval_local, make_eval_total
+from vdmc.estimator import build_eval_local, build_eval_total
 from .test_hamiltonian import make_test_log_f, make_test_ions, make_test_x
 
 
@@ -30,7 +30,7 @@ def test_eval_local_shape():
     f, logf = make_test_log_f()
     model = make_dummy_model(get_sign_log(f))
     ions, elems = make_test_ions()
-    eval_local = make_eval_local(model, ions, elems)
+    eval_local = build_eval_local(model, ions, elems)
     
     a = None
     x = make_test_x()
@@ -69,7 +69,7 @@ def test_eval_total(clipping):
         (clipped_local_energies - target_energy) * log_psi_grad_x
     )
 
-    eval_total = make_eval_total(eval_local, clipping,)
+    eval_total = build_eval_total(eval_local, clipping,)
     eval_total_grad = jax.value_and_grad(eval_total, has_aux=True)
 
     # loss, aux = eval_total(a, (x, log_sample))

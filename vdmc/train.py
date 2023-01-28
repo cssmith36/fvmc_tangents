@@ -8,10 +8,10 @@ from . import LOGGER
 from .utils import PyTree, Array
 from .utils import Printer, save_checkpoint, load_pickle, cfg_to_yaml
 from .utils import paxis
-from .wavefunction import make_jastrow_slater
-from .sampler import make_sampler, make_batched, make_multistep
-from .estimator import make_eval_local, make_eval_total
-from .optimizer import make_optimizer, make_lr_schedule
+from .wavefunction import build_jastrow_slater
+from .sampler import build_sampler, make_batched, make_multistep
+from .estimator import build_eval_local, build_eval_total
+from .optimizer import build_optimizer, build_lr_schedule
 
 
 class SysInfo(NamedTuple):
@@ -45,11 +45,11 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, key=None, restart_
     system = SysInfo(ions, elems, n_elec)
 
     # make wavefunction
-    ansatz = make_jastrow_slater(ions, elems, spin, **ansatz_cfg)
+    ansatz = build_jastrow_slater(ions, elems, spin, **ansatz_cfg)
     
     # make estimators
-    local_fn = make_eval_local(ansatz, ions, elems)
-    loss_fn = make_eval_total(local_fn, optimize_cfg.energy_clipping)
+    local_fn = build_eval_local(ansatz, ions, elems)
+    loss_fn = build_eval_total(local_fn, optimize_cfg.energy_clipping)
     loss_and_grad = jax.value_and_grad(loss_fn, has_aux=True)
 
     # make sampler
@@ -59,14 +59,14 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, key=None, restart_
         LOGGER.warning("Sample size not divisible by batch size, rounding up")
     n_multistep = -(-n_sample // n_chain)
     n_batch = n_chain # TODO when parallel, this is the chains on a local device
-    raw_sampler = make_sampler(ansatz, tot_elec, **sample_cfg.sampler)
+    raw_sampler = build_sampler(ansatz, tot_elec, **sample_cfg.sampler)
     sampler = make_multistep(raw_sampler, n_step=n_multistep, concat=False)
     sampler = make_batched(sampler, n_batch=n_batch, concat=True)
     sampler = jax.tree_map(jax.jit, sampler) # TODO make it pmapped when parallel
 
     # make optimizer
-    lr_schedule = make_lr_schedule(**optimize_cfg.lr)
-    optimizer = make_optimizer(
+    lr_schedule = build_lr_schedule(**optimize_cfg.lr)
+    optimizer = build_optimizer(
         loss_and_grad, 
         lr_schedule=lr_schedule,
         value_func_has_aux=True,
@@ -110,7 +110,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, key=None, restart_
     return system, ansatz, loss_fn, sampler, optimizer, train_state
 
 
-def gen_training_step(sampler, optimizer):
+def build_training_step(sampler, optimizer):
     """generate a training loop step function from sampler and optimizer"""
 
     def training_step(train_state):
@@ -178,7 +178,7 @@ def main(cfg):
     system, ansatz, loss_fn, sampler, optimizer, train_state \
         = prepare(cfg.system, cfg.ansatz, cfg.sample, cfg.optimize, key, cfg.restart)
 
-    training_step = gen_training_step(sampler, optimizer)
+    training_step = build_training_step(sampler, optimizer)
     train_state = run(training_step, train_state, cfg.optimize.iterations, cfg.log)
     
     return train_state

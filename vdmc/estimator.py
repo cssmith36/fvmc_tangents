@@ -28,7 +28,7 @@ def clip_around(a, target, half_range, stop_gradient=True):
     return jnp.clip(a, c_min, c_max)
 
 
-def make_eval_local(model, ions, elems):
+def build_eval_local(model, ions, elems):
     """create a function that evaluates local energy, sign and log abs of wavefunction.
     
     The created function will calculate these quantities for both ket and bra (conjugated),
@@ -57,7 +57,7 @@ def make_eval_local(model, ions, elems):
     return eval_local
 
 
-def make_eval_total(eval_local_fn, clipping=0.):
+def build_eval_total(eval_local_fn, clipping=0.):
     """Create a function that evaluates quantities on the whole batch of samples.
 
     The created function will take paramters and sampled data as input,

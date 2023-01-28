@@ -36,25 +36,25 @@ class MCSampler(NamedTuple):
         return lax.scan(inner, state, jax.random.split(key, steps))[0]
     
 
-def choose_sampler_maker(name: str) -> Callable[..., MCSampler]:
+def choose_sampler_builder(name: str) -> Callable[..., MCSampler]:
     name = name.lower()
     if name in ("gaussian",):
-        return make_gaussian
+        return build_gaussian
     if name in ("metropolis", "mcmc", "mh"):
-        return make_metropolis
+        return build_metropolis
     if name in ("langevin", "mala"):
-        return make_langevin
+        return build_langevin
     if name in ("hamiltonian", "hybrid", "hmc"):
-        return make_hamiltonian
+        return build_hamiltonian
     if name in ("black", "blackjax"):
-        return make_blackjax
+        return build_blackjax
     raise NotImplementedError(f"unsupported sampler type: {name}")
 
 
-def make_sampler(model: nn.Module, n_elec: int, 
+def build_sampler(model: nn.Module, n_elec: int, 
                  name: str, beta: float = 1, 
                  **kwargs):
-    maker = choose_sampler_maker(name)
+    maker = choose_sampler_builder(name)
     logdens_fn = lambda p, x: 2 * beta * model.apply(p, x)[1]
     sample_shape = onp.array([n_elec, 3])
     return maker(logdens_fn, sample_shape, **kwargs)
@@ -112,7 +112,7 @@ def make_chained(*samplers):
 
 ##### Below are generation functions for different samplers #####
 
-def make_gaussian(logdens_fn, sample_shape, mu=0., sigma=1., truncate=None):
+def build_gaussian(logdens_fn, sample_shape, mu=0., sigma=1., truncate=None):
     xsize, unravel = ravel_shape(sample_shape)
     info = {"is_accepted": True}
 
@@ -135,7 +135,7 @@ def make_gaussian(logdens_fn, sample_shape, mu=0., sigma=1., truncate=None):
     return MCSampler(sample, init, refresh)
 
 
-def make_metropolis(logdens_fn, sample_shape, sigma=0.05, steps=10):
+def build_metropolis(logdens_fn, sample_shape, sigma=0.05, steps=10):
     xsize, unravel = ravel_shape(sample_shape)
     ravel_logd = lambda p, x: logdens_fn(p, unravel(x))
 
@@ -164,7 +164,7 @@ def make_metropolis(logdens_fn, sample_shape, sigma=0.05, steps=10):
     return MCSampler(sample, init, refresh)
 
 
-def make_langevin(logdens_fn, sample_shape, tau=0.01, steps=10, grad_clipping=None):
+def build_langevin(logdens_fn, sample_shape, tau=0.01, steps=10, grad_clipping=None):
     xsize, unravel = ravel_shape(sample_shape)
     ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
     logd_and_grad = jax.value_and_grad(ravel_logd, 1)
@@ -201,7 +201,7 @@ def make_langevin(logdens_fn, sample_shape, tau=0.01, steps=10, grad_clipping=No
     return MCSampler(sample, init, refresh)
 
 
-def make_hamiltonian(logdens_fn, sample_shape, dt=0.1, length=1., grad_clipping=None):
+def build_hamiltonian(logdens_fn, sample_shape, dt=0.1, length=1., grad_clipping=None):
     xsize, unravel = ravel_shape(sample_shape)
     ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
     logd_and_grad = jax.value_and_grad(ravel_logd, 1)
@@ -232,7 +232,7 @@ def make_hamiltonian(logdens_fn, sample_shape, dt=0.1, length=1., grad_clipping=
     return MCSampler(sample, init, refresh)
 
 
-def make_blackjax(logdens_fn, sample_shape, kernel="nuts", grad_clipping=None, **kwargs):
+def build_blackjax(logdens_fn, sample_shape, kernel="nuts", grad_clipping=None, **kwargs):
     from blackjax import hmc, nuts
     xsize, unravel = ravel_shape(sample_shape)
     inv_mass = 0.5 * jnp.ones(xsize)

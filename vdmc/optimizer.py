@@ -198,13 +198,13 @@ class OptaxWrapper:
         return result
 
 
-def make_lr_schedule(base=1e-4, decay_time=1e4, decay_power=1.):
+def build_lr_schedule(base=1e-4, decay_time=1e4, decay_power=1.):
     if decay_power is None or decay_time is None:
         return lambda t: base
     return lambda t: base * jnp.power((1.0 / (1.0 + (t/decay_time))), decay_power)
 
 
-def make_optimizer(value_and_grad_func,
+def build_optimizer(value_and_grad_func,
                    name,
                    lr_schedule=None,
                    value_func_has_aux=False,
@@ -216,16 +216,16 @@ def make_optimizer(value_and_grad_func,
     if lr_schedule is None:
         lr_schedule = {}
     if not callable(lr_schedule):
-        lr_schedule = make_lr_schedule(**lr_schedule)
+        lr_schedule = build_lr_schedule(**lr_schedule)
 
     if name == "kfac":
         const_schedule = {"decay_power": None, "decay_time": None}
-        momentum_schedule = make_lr_schedule(**{
+        momentum_schedule = build_lr_schedule(**{
             "base": kwargs.pop("momentum", 0.0),
             **const_schedule,
             **kwargs.pop("momentum_schedule", {})
         })
-        damping_schedule = make_lr_schedule(**{
+        damping_schedule = build_lr_schedule(**{
             "base": kwargs.pop("damping", 1e-3),
             **const_schedule,
             **kwargs.pop("damping_schedule", {})
