@@ -20,6 +20,7 @@ def default() -> ConfigDict:
             "spin": None,
         },
 
+        #TODO make a default ansatz parameters
         "ansatz": {},
 
         "sample": {
