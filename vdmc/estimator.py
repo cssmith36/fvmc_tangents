@@ -125,7 +125,7 @@ def build_eval_total(eval_local_fn, clipping=0.):
             lambda x: lax.stop_gradient(jnp.flip(x, -1)), 
             (eclip, sign, logf))
         # make normalized psi_sqr, grad w.r.t it is equivalent to grad of log psi
-        psi_sqr = (exp_shifted(logf + logf_c - logsw[..., None])[0]
+        psi_sqr = (jnp.exp(logf + logf_c - logsw[..., None])
                    * sign * sign_c / lax.stop_gradient(avg_s))
         kfac_jax.register_squared_error_loss(psi_sqr, weight=0.5)
         e_diff = lax.stop_gradient(eclip_c - etot)
