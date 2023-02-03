@@ -276,7 +276,7 @@ pmean_if_pmap = wrap_if_pmap(lax.pmean)
 
 
 @dataclasses.dataclass(frozen=True)
-class PAxis:
+class PmapAxis:
     name : str
     def __post_init__(self):
         for nm, fn in (("vmap", jax.vmap), ("pmap", jax.pmap),
@@ -290,4 +290,4 @@ class PAxis:
             object.__setattr__(self, f"all_{nm}", all_fn)
 
 PMAP_AXIS_NAME = "_pmap_axis"
-paxis = PAxis(PMAP_AXIS_NAME)
+PAXIS = PmapAxis(PMAP_AXIS_NAME)

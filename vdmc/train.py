@@ -7,7 +7,7 @@ from typing import NamedTuple, Tuple
 from . import LOGGER
 from .utils import PyTree, Array
 from .utils import Printer, save_checkpoint, load_pickle, cfg_to_yaml
-from .utils import paxis
+from .utils import PAXIS
 from .wavefunction import build_jastrow_slater
 from .sampler import build_sampler, make_batched, make_multistep
 from .estimator import build_eval_local, build_eval_total
@@ -49,7 +49,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, key=None, restart_
     
     # make estimators
     local_fn = build_eval_local(ansatz, ions, elems)
-    loss_fn = build_eval_total(local_fn, optimize_cfg.energy_clipping)
+    loss_fn = build_eval_total(local_fn, optimize_cfg.energy_clipping, PAXIS.name)
     loss_and_grad = jax.value_and_grad(loss_fn, has_aux=True)
 
     # make sampler
@@ -73,6 +73,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, key=None, restart_
         value_func_has_rng=False,
         value_func_has_state=False,
         multi_device=False, # TODO this is true when parallel
+        pmap_axis_name=PAXIS.name,
         **optimize_cfg.optimizer)
 
     # make training states 
@@ -147,7 +148,7 @@ def run(step_fn, train_state, iterations, log_cfg):
 
         # log stats
         if ii % log_cfg.stat_every == 0 or ii == iterations-1:
-            acc_rate = paxis.all_mean(mc_info["is_accepted"])
+            acc_rate = PAXIS.all_mean(mc_info["is_accepted"])
             stat_dict = {"step": opt_info["step"]-1, **opt_info["aux"], 
                          "acc": acc_rate, "lr":opt_info["learning_rate"]}
             printer.print_fields(stat_dict)

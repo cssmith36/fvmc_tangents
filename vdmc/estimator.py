@@ -4,11 +4,12 @@ from jax import numpy as jnp
 from functools import partial
 import kfac_jax
 
-from .utils import paxis, ith_output
+from .utils import PMAP_AXIS_NAME, PmapAxis, ith_output
 from .hamiltonian import calc_kinetic_energy, calc_potential_energy
 
 
-def exp_shifted(x, normalize=None):
+def exp_shifted(x, normalize=None, pmap_axis_name=PMAP_AXIS_NAME):
+    paxis = PmapAxis(pmap_axis_name)
     stblz = paxis.all_max(x)
     exp = jnp.exp(x - stblz)
     if normalize:
@@ -57,7 +58,7 @@ def build_eval_local(model, ions, elems):
     return eval_local
 
 
-def build_eval_total(eval_local_fn, clipping=0.):
+def build_eval_total(eval_local_fn, clipping=0., pmap_axis_name=PMAP_AXIS_NAME):
     """Create a function that evaluates quantities on the whole batch of samples.
 
     The created function will take paramters and sampled data as input,
@@ -79,6 +80,7 @@ def build_eval_total(eval_local_fn, clipping=0.):
         aux is a dict that contains multiple statistical quantities calculated from the sample.
     """
 
+    paxis = PmapAxis(PMAP_AXIS_NAME)
     batch_local = jax.vmap(eval_local_fn, in_axes=(None, 0), out_axes=0)
 
     def eval_total(params, data):
@@ -100,7 +102,8 @@ def build_eval_total(eval_local_fn, clipping=0.):
 
         # calculating relative weights for stats
         eloc_r, sign_r, logf_r = eloc.mean(-1), sign.prod(-1), logf.sum(-1)
-        rel_w, lshift = exp_shifted(logf_r - logsw, normalize="mean")
+        rel_w, lshift = exp_shifted(logf_r - logsw, 
+            normalize="mean", pmap_axis_name=paxis.name)
         tot_w = paxis.all_mean(rel_w) # should be just 1, but provide correct gradient
         # compute averages and total energy
         avg_es = paxis.all_mean((eloc_r * sign_r) * rel_w).real # averaged (sign * eloc)

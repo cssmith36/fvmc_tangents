@@ -21,7 +21,7 @@ from typing import Optional, Any, Callable, Tuple, Mapping, Union, Iterator, Nam
 import jax
 import jax.numpy as jnp
 from . import curvature_tags_and_blocks
-from .utils import paxis
+from .utils import PMAP_AXIS_NAME
 
 
 OptaxState = Any
@@ -211,6 +211,7 @@ def build_optimizer(value_and_grad_func,
                    value_func_has_state=False,
                    value_func_has_rng=False,
                    multi_device=False,
+                   pmap_axis_name=PMAP_AXIS_NAME,
                    **kwargs):
     # build lr schedule
     if lr_schedule is None:
@@ -236,7 +237,7 @@ def build_optimizer(value_and_grad_func,
                                   value_func_has_state=value_func_has_state,
                                   value_func_has_rng=value_func_has_rng,
                                   multi_device=multi_device,
-                                  pmap_axis_name=paxis.name,
+                                  pmap_axis_name=pmap_axis_name,
                                   learning_rate_schedule=lr_schedule,
                                   momentum_schedule = momentum_schedule,
                                   damping_schedule = damping_schedule,
@@ -255,5 +256,5 @@ def build_optimizer(value_and_grad_func,
                             value_func_has_state=value_func_has_state,
                             value_func_has_rng=value_func_has_rng,
                             multi_device=multi_device,
-                            pmap_axis_name=paxis.name,
+                            pmap_axis_name=pmap_axis_name,
                             **kwargs)
