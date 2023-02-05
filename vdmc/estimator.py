@@ -10,7 +10,7 @@ from .hamiltonian import calc_kinetic_energy, calc_potential_energy
 
 def exp_shifted(x, normalize=None, pmap_axis_name=PMAP_AXIS_NAME):
     paxis = PmapAxis(pmap_axis_name)
-    stblz = paxis.all_max(x)
+    stblz = paxis.all_max(lax.stop_gradient(x))
     exp = jnp.exp(x - stblz)
     if normalize:
         assert normalize.lower() in ("sum", "mean"), "invalid normalize option"

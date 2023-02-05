@@ -25,6 +25,14 @@ _t_cplx = complex
 # _t_cplx = jnp.comple128
 
 
+def adaptive_split(key, num=2, multi_device=False):
+    if multi_device:
+        import kfac_jax
+        return kfac_jax.utils.p_split_num(key, num)
+    else:
+        return jax.random.split(key, num)
+
+
 def compose(*funcs):
     def c2(f, g):
         return lambda *a, **kw: f(g(*a, **kw))

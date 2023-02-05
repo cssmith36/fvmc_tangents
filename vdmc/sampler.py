@@ -8,6 +8,7 @@ from typing import NamedTuple, Callable, Tuple, Union, Dict
 
 from .wavefunction import nn
 from .utils import PyTree, Array
+from .utils import adaptive_split
 from .utils import ravel_shape, tree_where, tree_map, clip_gradient
 
 
@@ -32,8 +33,12 @@ class MCSampler(NamedTuple):
 
     def burn_in(self, key: KeyArray, params: Params, state: State, steps: int):
         """Burn in the state for given steps"""
-        inner = lambda s,k: (self.sample(k, params, s)[0], None)
-        return lax.scan(inner, state, jax.random.split(key, steps))[0]
+        # inner = lambda s,k: (self.sample(k, params, s)[0], None)
+        # return lax.scan(inner, state, jax.random.split(key, steps))[0]
+        for ii in range(steps):
+            key, subkey = adaptive_split(key, multi_device=key.ndim>1)
+            state = self.sample(subkey, params, state)[0]
+        return state
     
 
 def choose_sampler_builder(name: str) -> Callable[..., MCSampler]:

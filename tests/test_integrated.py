@@ -11,7 +11,7 @@ def test_h2_kfac(tmp_path, capfd):
 
     cfg = vdmc.config.default()
     cfg.seed = 0
-    cfg.logging_level = "INFO"
+    cfg.verbosity = "INFO"
     #cfg.restart.params = 'oldstates.pkl'
 
     cfg.system.ions = [[0.,0.,0.], [0.,0.,1.]]

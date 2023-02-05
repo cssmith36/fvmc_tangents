@@ -6,7 +6,9 @@ def default() -> ConfigDict:
         
         "seed": 0,
 
-        "logging_level": "WARNING",
+        "verbosity": "WARNING",
+
+        "multi_device": False,
 
         "restart": {
             "params": None,

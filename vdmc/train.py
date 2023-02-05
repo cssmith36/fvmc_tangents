@@ -1,13 +1,15 @@
 import jax
+import kfac_jax
 from jax import numpy as jnp
 from ml_collections import ConfigDict
 from tensorboardX import SummaryWriter
 from typing import NamedTuple, Tuple
+from functools import partial
 
 from . import LOGGER
 from .utils import PyTree, Array
 from .utils import Printer, save_checkpoint, load_pickle, cfg_to_yaml
-from .utils import PAXIS
+from .utils import PAXIS, adaptive_split
 from .wavefunction import build_jastrow_slater
 from .sampler import build_sampler, make_batched, make_multistep
 from .estimator import build_eval_local, build_eval_total
@@ -27,8 +29,13 @@ class TrainingState(NamedTuple):
     opt_state: PyTree
 
 
-def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, key=None, restart_cfg=None):
+def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, 
+            key=None, restart_cfg=None, multi_device=False):
     """prepare system, ansatz, sampler, optimizer and training state"""
+
+    # handle multi device settings
+    n_device = jax.device_count() if multi_device else 1
+    rng_split = partial(adaptive_split, multi_device=multi_device)
 
     # make sure all cfg are ConfigDict
     system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, restart_cfg= \
@@ -58,11 +65,11 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, key=None, restart_
     if n_chain % n_sample != 0:
         LOGGER.warning("Sample size not divisible by batch size, rounding up")
     n_multistep = -(-n_sample // n_chain)
-    n_batch = n_chain # TODO when parallel, this is the chains on a local device
+    n_batch = n_chain // n_device
     raw_sampler = build_sampler(ansatz, tot_elec, **sample_cfg.sampler)
     sampler = make_multistep(raw_sampler, n_step=n_multistep, concat=False)
     sampler = make_batched(sampler, n_batch=n_batch, concat=True)
-    sampler = jax.tree_map(jax.jit, sampler) # TODO make it pmapped when parallel
+    sampler = jax.tree_map(PAXIS.pmap if multi_device else jax.jit, sampler)
 
     # make optimizer
     lr_schedule = build_lr_schedule(**optimize_cfg.lr)
@@ -72,13 +79,11 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, key=None, restart_
         value_func_has_aux=True,
         value_func_has_rng=False,
         value_func_has_state=False,
-        multi_device=False, # TODO this is true when parallel
+        multi_device=multi_device,
         pmap_axis_name=PAXIS.name,
         **optimize_cfg.optimizer)
 
     # make training states 
-    # TODO add logging because these can be slow
-    # TODO parallel initialize is different
     if "states" in restart_cfg and restart_cfg.states:
         LOGGER.info("Loading parameters and states from saved file")
         train_state = TrainingState(*load_pickle(restart_cfg.states))
@@ -86,23 +91,29 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, key=None, restart_
         LOGGER.info("Initializing parameters and states")
         assert key is not None, \
             "key is required if not restarting from previous state"
-        key, parkey, mckey, optkey, statekey = jax.random.split(key, 5)
         # initialize params
         if "params" in restart_cfg and restart_cfg.params:
             LOGGER.info("Loading parameters from saved file")
             params = load_pickle(restart_cfg.params)
             if isinstance(params, tuple): params = params[1]
         else:
+            key, parkey = jax.random.split(key) # init use single key
             fake_input = jnp.zeros((tot_elec, 3))
             params = ansatz.init(parkey, fake_input)
+            if multi_device:
+                params = kfac_jax.utils.replicate_all_local_devices(params)
+        # after init params, use pmapped key
+        if multi_device:
+            key = kfac_jax.utils.make_different_rng_key_on_all_devices(key)
+        key, mckey, optkey, statekey = rng_split(key, 4)
         # initialize mc state
         mc_state = sampler.init(mckey, params)
         if "burn_in" in sample_cfg and sample_cfg.burn_in > 0:
             LOGGER.info(f"Burning in the sampler for {sample_cfg.burn_in} steps")
-            key, subkey = jax.random.split(key)
+            key, subkey = rng_split(key)
             mc_state = sampler.burn_in(subkey, params, mc_state, sample_cfg.burn_in)
-        key, subkey = jax.random.split(key)
-        mc_state, init_data, _ = sampler.sample(key, params, mc_state)
+        key, subkey = rng_split(key)
+        mc_state, init_data, _ = sampler.sample(subkey, params, mc_state)
         # initialize opt state
         opt_state = optimizer.init(params, optkey, init_data)
         # assemble training state
@@ -114,9 +125,11 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, key=None, restart_
 def build_training_step(sampler, optimizer):
     """generate a training loop step function from sampler and optimizer"""
 
+    rng_split = partial(adaptive_split, multi_device=optimizer.multi_device)
+
     def training_step(train_state):
         key, params, mc_state, opt_state = train_state
-        key, mckey, optkey = jax.random.split(key, 3)
+        key, mckey, optkey = rng_split(key, 3)
         mc_state, data, mc_info = sampler.sample(mckey, params, mc_state)
         params, opt_state, opt_info = optimizer.step(params, opt_state, optkey, batch=data)
         mc_state = sampler.refresh(mc_state, params)
@@ -151,6 +164,8 @@ def run(step_fn, train_state, iterations, log_cfg):
             acc_rate = PAXIS.all_mean(mc_info["is_accepted"])
             stat_dict = {"step": opt_info["step"]-1, **opt_info["aux"], 
                          "acc": acc_rate, "lr":opt_info["learning_rate"]}
+            stat_dict = jax.tree_map( # collect from potential pmap
+                lambda x: x[0] if jnp.ndim(x) > 0 else x, stat_dict)
             printer.print_fields(stat_dict)
             for k,v in stat_dict.items():
                 writer.add_scalar(k, v, ii)
@@ -172,12 +187,13 @@ def main(cfg):
                 print(cfg_to_yaml(cfg), file=hpfile)
 
     import logging
-    logging_level = getattr(logging, cfg.logging_level.upper())
-    LOGGER.setLevel(logging_level)
+    verbosity = getattr(logging, cfg.verbosity.upper())
+    LOGGER.setLevel(verbosity)
 
     key = jax.random.PRNGKey(cfg.seed) if 'seed' in cfg else None
     system, ansatz, loss_fn, sampler, optimizer, train_state \
-        = prepare(cfg.system, cfg.ansatz, cfg.sample, cfg.optimize, key, cfg.restart)
+        = prepare(cfg.system, cfg.ansatz, cfg.sample, cfg.optimize, 
+                  key, cfg.restart, cfg.multi_device)
 
     training_step = build_training_step(sampler, optimizer)
     train_state = run(training_step, train_state, cfg.optimize.iterations, cfg.log)

@@ -103,9 +103,9 @@ class OptaxWrapper:
         self._value_func_has_rng = value_func_has_rng
         self._optax_optimizer = optax.inject_hyperparams(optax_factory)(learning_rate=learning_rate, **optax_kwargs)
         self._batch_process_func = batch_process_func or (lambda x: x)
-        self._multi_device = multi_device
+        self.multi_device = multi_device
         self._pmap_axis_name = pmap_axis_name
-        if self._multi_device:
+        if self.multi_device:
             self._jit_step = jax.pmap(self._step, axis_name=self._pmap_axis_name, donate_argnums=list(range(5)))
         else:
             self._jit_step = jax.jit(self._step)
@@ -119,7 +119,7 @@ class OptaxWrapper:
     ) -> OptaxState:
         """Initializes the optimizer and returns the appropriate optimizer state."""
         del rng, batch, func_state
-        if self._multi_device:
+        if self.multi_device:
             return jax.pmap(self._optax_optimizer.init, axis_name=self._pmap_axis_name)(params)
         else:
             return self._optax_optimizer.init(params)
@@ -152,7 +152,7 @@ class OptaxWrapper:
             else:
                 new_func_state, aux = other, {}
         stats = dict(loss=loss, aux=aux)
-        if self._multi_device:
+        if self.multi_device:
             stats, grads = jax.lax.pmean((stats, grads), axis_name=self._pmap_axis_name)
         # Compute and apply updates via our optimizer.
         updates, new_state = self._optax_optimizer.update(grads, state, params)
