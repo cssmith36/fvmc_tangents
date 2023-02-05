@@ -3,7 +3,7 @@ import kfac_jax
 from jax import numpy as jnp
 from ml_collections import ConfigDict
 from tensorboardX import SummaryWriter
-from typing import NamedTuple, Tuple
+from typing import NamedTuple, Tuple, Optional, Union
 from functools import partial
 
 from . import LOGGER
@@ -27,6 +27,37 @@ class TrainingState(NamedTuple):
     params: PyTree
     mc_state: PyTree
     opt_state: PyTree
+
+
+def trim_training_state(train_state):
+    key, params, mc_state, opt_state = train_state
+    if key.ndim > 1: # pmapped
+        params, opt_state = jax.tree_map(lambda x: x[0], (params, opt_state))
+    return TrainingState(key, params, mc_state, opt_state)
+
+
+def match_loaded_state_to_device(train_state, multi_device: bool):
+    n_local_device = jax.local_device_count()
+    key, params, mc_state, opt_state = train_state
+    n_paxis = key.ndim - 1
+    if not multi_device: # to single device
+        if n_paxis == 0: # from single device
+            return train_state
+        else: # from multi device
+            key = key[0]
+            mc_state = jax.tree_map(lambda x: x.reshape(-1, *x.shape[2:]), mc_state)
+    else: # to multi device
+        params, opt_state = \
+            kfac_jax.utils.replicate_all_local_devices((params, opt_state))
+        if n_paxis > 0 and key.shape[0] >= n_local_device:
+            key = key[:n_local_device]
+        else:
+            key = jax.random.split(key.reshape(-1, 2)[0], n_local_device)
+        mc_state = jax.tree_map(
+            lambda x: x.reshape(n_local_device, -1, *x.shape[n_paxis+1:]),
+            mc_state)
+        key, mc_state = kfac_jax.utils.broadcast_all_local_devices((key, mc_state))
+    return TrainingState(key, params, mc_state, opt_state)
 
 
 def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, 
@@ -87,6 +118,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
     if "states" in restart_cfg and restart_cfg.states:
         LOGGER.info("Loading parameters and states from saved file")
         train_state = TrainingState(*load_pickle(restart_cfg.states))
+        train_state = match_loaded_state_to_device(train_state, multi_device)
     else:
         LOGGER.info("Initializing parameters and states")
         assert key is not None, \
@@ -100,8 +132,8 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
             key, parkey = jax.random.split(key) # init use single key
             fake_input = jnp.zeros((tot_elec, 3))
             params = ansatz.init(parkey, fake_input)
-            if multi_device:
-                params = kfac_jax.utils.replicate_all_local_devices(params)
+        if multi_device:
+            params = kfac_jax.utils.replicate_all_local_devices(params)
         # after init params, use pmapped key
         if multi_device:
             key = kfac_jax.utils.make_different_rng_key_on_all_devices(key)
@@ -172,8 +204,10 @@ def run(step_fn, train_state, iterations, log_cfg):
         
         # checkpoint
         if ii % log_cfg.ckpt_every == 0 or ii == iterations-1:
-            save_checkpoint(log_cfg.ckpt_path, tuple(train_state), 
-                            keep=log_cfg.ckpt_keep)
+            save_checkpoint(
+                log_cfg.ckpt_path, 
+                tuple(trim_training_state(train_state)),
+                keep=log_cfg.ckpt_keep)
     
     writer.close()
     return train_state
