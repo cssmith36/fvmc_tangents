@@ -47,18 +47,23 @@ def test_eval_total(clipping):
     log_psi = lambda a, x: (jnp.sign(x.mean(-1)-2), a * jnp.sum(jnp.square(x), axis=(-1)))
     model = make_dummy_model(log_psi)
 
+    def local_energy(x):
+        return 4.5 - x.mean(-1)
+
     def eval_local(params, x):
-        eloc = 4.5 - x.mean(-1)
+        eloc = local_energy(x)
         sign, logf = model.apply(params, x)
         return jnp.array([eloc, eloc]), jnp.array([sign, sign]), jnp.array([logf, logf])
 
     a = 3.5
     x = make_test_x()
+    x = x + jax.random.normal(jax.random.PRNGKey(0), x.shape)
 
     log_sample = 2. * log_psi(a, x)[1]
 
-    log_psi_grad_x = jnp.array([5.0, 25.0, 61.0])
-    target_local_energies = jnp.array([3.0, 1.0, -1.0])
+    # log_psi_grad_a = jnp.array([5.0, 25.0, 61.0])
+    log_psi_grad_a = jnp.sum(jnp.square(x), axis=(-1))
+    target_local_energies = local_energy(x)
     target_energy = target_local_energies.mean()
     target_variance = target_local_energies.var()
     tv = jnp.abs(target_local_energies - target_energy).mean()
@@ -66,9 +71,8 @@ def test_eval_total(clipping):
         target_energy-clipping*tv, target_energy+clipping*tv)
         if clipping > 0 else target_local_energies)
     target_grad_energy = 2.0 * jnp.mean(
-        (clipped_local_energies - target_energy) * log_psi_grad_x
+        (clipped_local_energies - target_energy) * log_psi_grad_a
     )
-
     eval_total = build_eval_total(eval_local, clipping,)
     eval_total_grad = jax.value_and_grad(eval_total, has_aux=True)
 
