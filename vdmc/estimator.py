@@ -58,7 +58,8 @@ def build_eval_local(model, ions, elems):
     return eval_local
 
 
-def build_eval_total(eval_local_fn, clipping=0., pmap_axis_name=PMAP_AXIS_NAME):
+def build_eval_total(eval_local_fn, energy_clipping=0., 
+                     grad_stablizing=False, pmap_axis_name=PMAP_AXIS_NAME):
     """Create a function that evaluates quantities on the whole batch of samples.
 
     The created function will take paramters and sampled data as input,
@@ -66,12 +67,18 @@ def build_eval_total(eval_local_fn, clipping=0., pmap_axis_name=PMAP_AXIS_NAME):
     and the second element a dict contains multiple statistical quantities of the samples.
 
     Args:
-        eval_local_fn (Callable): callable which evaluates the local energy, sign and log abs of wfn.
+        eval_local_fn (Callable): callable which evaluates 
+            the local energy, sign and log of absolute value of wfn.
             Should return a tuple with shape ([..., 2], [..., 2], [..., 2]),
             where the last dim of size 2 corresponds to ket and bra (conj'd) results.
-        clipping (float): If greater than zero, clip local energies that are
+        energy_clipping (float): If greater than zero, clip local energies that are
             outside [E_t - n D, E_t + n D], where E_t is the mean local energy, n is
             this value and D the mean absolute deviation of the local energies.
+            Defaults to 0 (no clipping).
+        grad_stablizing (bool): If True, use a trick that substract the mean in the grad
+            of log psi. This should give no contribution when there is no energy clipping
+            because it is a constant times averaged E_loc - E_tot, which is zero. 
+            But it will be helpful at the begining of training
 
     Returns:
         Callable with signature (params, data) -> (loss, aux) where data is a tuple of
@@ -80,7 +87,7 @@ def build_eval_total(eval_local_fn, clipping=0., pmap_axis_name=PMAP_AXIS_NAME):
         aux is a dict that contains multiple statistical quantities calculated from the sample.
     """
 
-    paxis = PmapAxis(PMAP_AXIS_NAME)
+    paxis = PmapAxis(pmap_axis_name)
     batch_local = jax.vmap(eval_local_fn, in_axes=(None, 0), out_axes=0)
 
     def eval_total(params, data):
@@ -120,16 +127,18 @@ def build_eval_total(eval_local_fn, clipping=0., pmap_axis_name=PMAP_AXIS_NAME):
 
         # clipping the local energy (for making the loss)
         eclip = eloc
-        if clipping > 0:
+        if energy_clipping > 0:
             tv = paxis.all_mean(jnp.abs(eloc - etot).mean(-1) * rel_w) / tot_w
-            eclip = clip_around(eloc, etot, clipping * tv, stop_gradient=True)
+            eclip = clip_around(eloc, etot, energy_clipping * tv, stop_gradient=True)
         # make the conjugated term (with stopped gradient)
         eclip_c, sign_c, logf_c = map(
             lambda x: lax.stop_gradient(jnp.flip(x, -1)), 
             (eclip, sign, logf))
         # make normalized psi_sqr, grad w.r.t it is equivalent to grad of log psi
-        psi_sqr = (jnp.exp(logf + logf_c - logsw[..., None])
-                   * sign * sign_c / lax.stop_gradient(avg_s))
+        log_shifted = logf + logf_c - logsw[..., None]
+        if grad_stablizing: # substract the averaged log psi (like baseline)
+            log_shifted -= paxis.all_mean(log_shifted)
+        psi_sqr = jnp.exp(log_shifted) * sign * sign_c / lax.stop_gradient(avg_s)
         kfac_jax.register_squared_error_loss(psi_sqr, weight=0.5)
         e_diff = lax.stop_gradient(eclip_c - etot)
         loss = paxis.all_mean((psi_sqr * e_diff).sum(-1)) # sum(-1) for h.c.

@@ -87,7 +87,8 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
     
     # make estimators
     local_fn = build_eval_local(ansatz, ions, elems)
-    loss_fn = build_eval_total(local_fn, optimize_cfg.energy_clipping, PAXIS.name)
+    loss_fn = build_eval_total(local_fn, 
+        pmap_axis_name=PAXIS.name, **optimize_cfg.loss)
     loss_and_grad = jax.value_and_grad(loss_fn, has_aux=True)
 
     # make sampler

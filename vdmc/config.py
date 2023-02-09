@@ -37,10 +37,13 @@ def default() -> ConfigDict:
         "optimize": {
             "iterations": 100_000,
             "lr": {},
-            "energy_clipping": 5.,
+            "loss": {
+                "energy_clipping": 5.,
+                "grad_stablizing": True,
+            },
             "optimizer": {
                 "name": "kfac",
-            }
+            },
         },
 
         "log": {
