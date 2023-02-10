@@ -181,6 +181,14 @@ def save_checkpoint(filename, data, keep=1):
     save_pickle(filename, data)
 
 
+def multi_process_name(filename):
+    n_proc = jax.process_count()
+    if n_proc == 1:
+        return filename
+    numlen = len(str(n_proc))
+    return f"{filename}.pid{jax.process_index():0{numlen}d}" 
+    
+
 def cfg_to_dict(cfg):
     if not isinstance(cfg, ConfigDict):
         return cfg

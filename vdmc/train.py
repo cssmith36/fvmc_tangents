@@ -9,7 +9,7 @@ from functools import partial
 from . import LOGGER
 from .utils import PyTree, Array
 from .utils import Printer, save_checkpoint, load_pickle, cfg_to_yaml
-from .utils import PAXIS, adaptive_split
+from .utils import PAXIS, adaptive_split, multi_process_name
 from .wavefunction import build_jastrow_slater
 from .sampler import build_sampler, make_batched, make_multistep
 from .estimator import build_eval_local, build_eval_total
@@ -67,6 +67,8 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
     # handle multi device settings
     n_device = jax.device_count() if multi_device else 1
     rng_split = partial(adaptive_split, multi_device=multi_device)
+    LOGGER.info("local device: %d, global devices: %d, process id: %d",
+        jax.local_device_count(), n_device, jax.process_index())
 
     # make sure all cfg are ConfigDict
     system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, restart_cfg= \
@@ -118,7 +120,8 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
     # make training states 
     if "states" in restart_cfg and restart_cfg.states:
         LOGGER.info("Loading parameters and states from saved file")
-        train_state = TrainingState(*load_pickle(restart_cfg.states))
+        state_path = multi_process_name(restart_cfg.states)
+        train_state = TrainingState(*load_pickle(state_path))
         train_state = match_loaded_state_to_device(train_state, multi_device)
     else:
         LOGGER.info("Initializing parameters and states")
@@ -127,7 +130,8 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         # initialize params
         if "params" in restart_cfg and restart_cfg.params:
             LOGGER.info("Loading parameters from saved file")
-            params = load_pickle(restart_cfg.params)
+            param_path = multi_process_name(restart_cfg.params)
+            params = load_pickle(param_path)
             if isinstance(params, tuple): params = params[1]
         else:
             key, parkey = jax.random.split(key) # init use single key
@@ -185,7 +189,9 @@ def run(step_fn, train_state, iterations, log_cfg):
     train_state = jax.tree_map(jnp.copy, train_state)
 
     LOGGER.info("Start training")
-    printer.print_header("# ")
+    if jax.process_index() == 0:
+        printer.print_header("# ")
+
     for ii in range(iterations):
         printer.reset_timer()
 
@@ -193,7 +199,8 @@ def run(step_fn, train_state, iterations, log_cfg):
         train_state, (mc_info, opt_info) = step_fn(train_state)
 
         # log stats
-        if ii % log_cfg.stat_every == 0 or ii == iterations-1:
+        if ((ii % log_cfg.stat_every == 0 or ii == iterations-1) 
+          and jax.process_index() == 0): # only print for process 0 (all same)
             acc_rate = PAXIS.all_mean(mc_info["is_accepted"])
             stat_dict = {"step": opt_info["step"]-1, **opt_info["aux"], 
                          "acc": acc_rate, "lr":opt_info["learning_rate"]}
@@ -205,8 +212,9 @@ def run(step_fn, train_state, iterations, log_cfg):
         
         # checkpoint
         if ii % log_cfg.ckpt_every == 0 or ii == iterations-1:
+            ckpt_path = multi_process_name(log_cfg.ckpt_path)
             save_checkpoint(
-                log_cfg.ckpt_path, 
+                ckpt_path, 
                 tuple(trim_training_state(train_state)),
                 keep=log_cfg.ckpt_keep)
     
