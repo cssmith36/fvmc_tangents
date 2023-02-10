@@ -179,7 +179,8 @@ def run(step_fn, train_state, iterations, log_cfg):
     """run the optimization loop (sample + update)"""
 
     log_cfg = ConfigDict(log_cfg)
-    writer = SummaryWriter(log_cfg.stat_path)
+    if jax.process_index() == 0:
+        writer = SummaryWriter(log_cfg.stat_path)
     print_fields = {"step": "", "e_tot": ".4f", 
                     "avg_s": ".4f", "var_e": ".3e", 
                     "acc": ".2f", "lr": ".2e"} 
@@ -217,17 +218,18 @@ def run(step_fn, train_state, iterations, log_cfg):
                 ckpt_path, 
                 tuple(trim_training_state(train_state)),
                 keep=log_cfg.ckpt_keep)
-    
-    writer.close()
+
+    if jax.process_index() == 0:
+        writer.close()
     return train_state
 
 
 def main(cfg):
     cfg = ConfigDict(cfg)
 
-    if "hpar_path" in cfg.log:
-            with open(cfg.log.hpar_path, "w") as hpfile:
-                print(cfg_to_yaml(cfg), file=hpfile)
+    if "hpar_path" in cfg.log and jax.process_index() == 0:
+        with open(cfg.log.hpar_path, "w") as hpfile:
+            print(cfg_to_yaml(cfg), file=hpfile)
 
     import logging
     verbosity = getattr(logging, cfg.verbosity.upper())

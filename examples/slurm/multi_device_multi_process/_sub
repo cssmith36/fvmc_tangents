@@ -1,0 +1,11 @@
+#!/bin/bash -l
+#SBATCH -N 1
+#SBATCH -n 2
+#SBATCH -t 5:0
+#SBATCH --mem 16G 
+#SBATCH --gres=gpu:2
+
+conda deactivate
+conda activate vmc
+
+srun -n 2 --exclusive python -u run.py > log.out

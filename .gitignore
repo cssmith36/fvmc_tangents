@@ -1,6 +1,6 @@
 # User defined
 *~
-checkpoint
+checkpoint*
 model.ckpt.*
 .vscode
 .ipynb_*

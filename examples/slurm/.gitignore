@@ -1,0 +1,5 @@
+checkpoint*
+log.out
+hparams.yaml
+**/tbdata/*
+slurm-*.out
