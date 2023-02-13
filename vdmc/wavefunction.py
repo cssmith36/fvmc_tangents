@@ -16,14 +16,14 @@ class Jastrow(nn.Module):
     The decay is isotropic in the sense that each electron-nuclei and electron-electron
     term is isotropic, i.e. radially symmetric. The computed interactions are:
 
-        sum_i(-sum_j Z_j ||elec_i - ion_j|| + sum_k Q ||elec_i - elec_k||)
+        \sum_i(-\sum_j Z_j ||elec_i - ion_j|| + \sum_k Q ||elec_i - elec_k||)
 
     (no exponential because it we are working with log of wavefunctions.)
     Z_j and Q are parameters that are initialized to be ion charges and 1.
     """
 
-    ions : Array
-    elems : Array
+    ions: Array
+    elems: Array
 
     @nn.compact
     def __call__(self, x: Array) -> Array:
@@ -49,10 +49,10 @@ class SimpleOrbital(nn.Module):
     and output a vector of size n_orb, correspinding to \psi_k(x_i)
     """
 
-    ions : Array
-    n_orb : int
+    ions: Array
+    n_orb: int
     n_hidden: int = 3
-    activation : str = "gelu"
+    activation: str = "gelu"
 
     @nn.compact
     def __call__(self, x: Array) -> Array:
@@ -79,12 +79,12 @@ class Slater(nn.Module):
     Return sign and log of determinant when called.
     """
 
-    ions : Array
-    elems : Array
-    spin : Optional[int] = None # difference between alpha and beta spin
-    full_det : bool = True
-    orbital_type : str = "simple"
-    orbital_args : dict = _field(default_factory=dict)
+    ions: Array
+    elems: Array
+    spin: Optional[int] = None # difference between alpha and beta spin
+    full_det: bool = True
+    orbital_type: str = "simple"
+    orbital_args: dict = _field(default_factory=dict)
 
     @nn.compact
     def __call__(self, x: Array) -> Tuple[Array, Array]:

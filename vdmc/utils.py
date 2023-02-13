@@ -217,9 +217,9 @@ def dict_to_cfg(cdict, **kwargs):
     
 
 class Serial(nn.Module):
-    layers : Sequence[nn.Module]
-    residual : bool = True
-    activation : Union[str, Callable] = "gelu"
+    layers: Sequence[nn.Module]
+    residual: bool = True
+    activation: Union[str, Callable] = "gelu"
 
     @nn.compact
     def __call__(self, x):
@@ -231,6 +231,8 @@ class Serial(nn.Module):
             if self.residual:
                 if x.shape[-1] >= tmp.shape[-1]:
                     x = x[...,:tmp.shape[-1]] + tmp
+                elif x.shape[-1] * 2 == tmp.shape[-1]:
+                    x = jnp.concatenate([x, x], axis=-1) + tmp
                 else:
                     x = tmp.at[...,:x.shape[-1]].add(x)
             else:
@@ -239,9 +241,9 @@ class Serial(nn.Module):
 
 
 def build_mlp(
-    layer_sizes : Sequence[int],
-    residual : bool = True,
-    activation : Union[str, Callable] = "gelu",
+    layer_sizes: Sequence[int],
+    residual: bool = True,
+    activation: Union[str, Callable] = "gelu",
     **dense_kwargs
 ) -> Serial:
     layers = [nn.Dense(ls, **dense_kwargs) for ls in layer_sizes]

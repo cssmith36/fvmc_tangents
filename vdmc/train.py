@@ -1,6 +1,7 @@
 import jax
 import kfac_jax
 from jax import numpy as jnp
+from flax import linen as nn
 from ml_collections import ConfigDict
 from tensorboardX import SummaryWriter
 from typing import NamedTuple, Tuple, Optional, Union
@@ -71,8 +72,8 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         jax.local_device_count(), n_device, jax.process_index())
 
     # make sure all cfg are ConfigDict
-    system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, restart_cfg= \
-        map(ConfigDict, (system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, restart_cfg))
+    system_cfg, sample_cfg, optimize_cfg, restart_cfg= \
+        map(ConfigDict, (system_cfg, sample_cfg, optimize_cfg, restart_cfg))
 
     # parse system, may be changed (e.g. using pyscf mol)
     ions = jnp.asarray(system_cfg.ions)
@@ -85,8 +86,12 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
     system = SysInfo(ions, elems, n_elec)
 
     # make wavefunction
-    ansatz = build_jastrow_slater(ions, elems, spin, **ansatz_cfg)
-    
+    if isinstance(ansatz_cfg, nn.Module):
+        ansatz = ansatz_cfg
+    else:
+        ansatz_cfg = ConfigDict(ansatz_cfg)
+        ansatz = build_jastrow_slater(ions, elems, spin, **ansatz_cfg)
+
     # make estimators
     local_fn = build_eval_local(ansatz, ions, elems)
     loss_fn = build_eval_total(local_fn, 
