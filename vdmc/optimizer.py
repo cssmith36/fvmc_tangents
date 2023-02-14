@@ -204,15 +204,17 @@ def build_lr_schedule(base=1e-4, decay_time=1e4, decay_power=1.):
     return lambda t: base * jnp.power((1.0 / (1.0 + (t/decay_time))), decay_power)
 
 
-def build_optimizer(value_and_grad_func,
-                   name,
-                   lr_schedule=None,
-                   value_func_has_aux=False,
-                   value_func_has_state=False,
-                   value_func_has_rng=False,
-                   multi_device=False,
-                   pmap_axis_name=PMAP_AXIS_NAME,
-                   **kwargs):
+def build_optimizer(
+        value_and_grad_func,
+        name,
+        lr_schedule=None,
+        value_func_has_aux=False,
+        value_func_has_state=False,
+        value_func_has_rng=False,
+        multi_device=False,
+        pmap_axis_name=PMAP_AXIS_NAME,
+        **kwargs
+    ):
     # build lr schedule
     if lr_schedule is None:
         lr_schedule = {}

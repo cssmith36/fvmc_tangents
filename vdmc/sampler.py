@@ -59,10 +59,10 @@ def choose_sampler_builder(name: str) -> Callable[..., MCSampler]:
 def build_sampler(model: nn.Module, n_elec: int, 
                  name: str, beta: float = 1, 
                  **kwargs):
-    maker = choose_sampler_builder(name)
+    builder = choose_sampler_builder(name)
     logdens_fn = lambda p, x: 2 * beta * model.apply(p, x)[1]
     sample_shape = onp.array([n_elec, 3])
-    return maker(logdens_fn, sample_shape, **kwargs)
+    return builder(logdens_fn, sample_shape, **kwargs)
 
 
 ##### Below are sampler transformations #####
@@ -117,7 +117,8 @@ def make_chained(*samplers):
 
 ##### Below are generation functions for different samplers #####
 
-def build_gaussian(logdens_fn, sample_shape, mu=0., sigma=1., truncate=None):
+def build_gaussian(logdens_fn, shape_or_init, mu=0., sigma=1., truncate=None):
+    sample_shape = _extract_sample_shape(shape_or_init)
     xsize, unravel = ravel_shape(sample_shape)
     info = {"is_accepted": True}
 
@@ -140,7 +141,8 @@ def build_gaussian(logdens_fn, sample_shape, mu=0., sigma=1., truncate=None):
     return MCSampler(sample, init, refresh)
 
 
-def build_metropolis(logdens_fn, sample_shape, sigma=0.05, steps=10):
+def build_metropolis(logdens_fn, shape_or_init, sigma=0.05, steps=10):
+    sample_shape = _extract_sample_shape(shape_or_init)
     xsize, unravel = ravel_shape(sample_shape)
     ravel_logd = lambda p, x: logdens_fn(p, unravel(x))
 
@@ -164,12 +166,13 @@ def build_metropolis(logdens_fn, sample_shape, sigma=0.05, steps=10):
         ld_new = ravel_logd(params, sample)
         return (sample, ld_new)
     
-    init = _make_init_from_refresh(refresh, xsize)
+    init = _gen_init_from_refresh(refresh, shape_or_init)
 
     return MCSampler(sample, init, refresh)
 
 
-def build_langevin(logdens_fn, sample_shape, tau=0.01, steps=10, grad_clipping=None):
+def build_langevin(logdens_fn, shape_or_init, tau=0.01, steps=10, grad_clipping=None):
+    sample_shape = _extract_sample_shape(shape_or_init)
     xsize, unravel = ravel_shape(sample_shape)
     ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
     logd_and_grad = jax.value_and_grad(ravel_logd, 1)
@@ -201,12 +204,13 @@ def build_langevin(logdens_fn, sample_shape, tau=0.01, steps=10, grad_clipping=N
         ld_new, grads_new = logd_and_grad(params, sample)
         return (sample, grads_new.conj(), ld_new)
 
-    init = _make_init_from_refresh(refresh, xsize)
+    init = _gen_init_from_refresh(refresh, shape_or_init)
 
     return MCSampler(sample, init, refresh)
 
 
-def build_hamiltonian(logdens_fn, sample_shape, dt=0.1, length=1., grad_clipping=None):
+def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1., grad_clipping=None):
+    sample_shape = _extract_sample_shape(shape_or_init)
     xsize, unravel = ravel_shape(sample_shape)
     ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
     logd_and_grad = jax.value_and_grad(ravel_logd, 1)
@@ -216,7 +220,7 @@ def build_hamiltonian(logdens_fn, sample_shape, dt=0.1, length=1., grad_clipping
         q1, g1, ld1 = state
         p1 = jax.random.normal(gkey, shape=q1.shape)
         potential_fn = lambda x: -ravel_logd(params, x)
-        leapfrog = make_leapfrog(potential_fn, dt, round(length / dt), True)
+        leapfrog = gen_leapfrog(potential_fn, dt, round(length / dt), True)
         q2, p2, f2, v2 = leapfrog(q1, p1, -g1, -ld1)
         g2, ld2 = -f2, -v2
         ratio = (logd_gaussian(-p2).sum(-1)+ld2) - (logd_gaussian(p1).sum(-1)+ld1)
@@ -224,21 +228,19 @@ def build_hamiltonian(logdens_fn, sample_shape, dt=0.1, length=1., grad_clipping
         info = {"is_accepted": accepted}
         return (qn, gn, ldn), (unravel(qn), ldn), info
 
-    def init(key, params):
-        sigma, mu = 1., 0.
-        sample = jax.random.normal(key, (xsize,)) * sigma + mu
-        return refresh((sample,), params)
-
     def refresh(state, params):
         sample = state[0]
         ld_new, grads_new = logd_and_grad(params, sample)
         return (sample, grads_new.conj(), ld_new)
 
+    init = _gen_init_from_refresh(refresh, shape_or_init)
+    
     return MCSampler(sample, init, refresh)
 
 
-def build_blackjax(logdens_fn, sample_shape, kernel="nuts", grad_clipping=None, **kwargs):
+def build_blackjax(logdens_fn, shape_or_init, kernel="nuts", grad_clipping=None, **kwargs):
     from blackjax import hmc, nuts
+    sample_shape = _extract_sample_shape(shape_or_init)
     xsize, unravel = ravel_shape(sample_shape)
     inv_mass = 0.5 * jnp.ones(xsize)
     ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
@@ -257,7 +259,7 @@ def build_blackjax(logdens_fn, sample_shape, kernel="nuts", grad_clipping=None, 
         logprob_fn = partial(ravel_logd, params)
         return (sample, kmodule.init(sample, logprob_fn))
 
-    init = _make_init_from_refresh(refresh, xsize)
+    init = _gen_init_from_refresh(refresh, shape_or_init)
 
     return MCSampler(sample, init, refresh)
 
@@ -276,7 +278,7 @@ def mh_select(key, ratio, state1, state2):
     return new_state, cond
 
 
-def make_leapfrog(potential_fn, dt, steps, with_carry=True):
+def gen_leapfrog(potential_fn, dt, steps, with_carry=True):
     pot_and_grad = jax.value_and_grad(potential_fn)
 
     def leapfrog_carry(q, p, g, v):
@@ -303,16 +305,39 @@ def make_leapfrog(potential_fn, dt, steps, with_carry=True):
     return leapfrog_carry if with_carry else leapfrog_nocarry
 
 
-def _make_init_from_refresh(refresh_fn, size, mu=0., sigma=1.):
-    def init(key, params):
-        sample = jax.random.normal(key, (size,)) * sigma + mu
-        return refresh_fn((sample,), params)
-    return init
-
-
 def _gclip(x, bnd):
     if bnd is None:
         return x
     if isinstance(bnd, (int, float, Array)):
         bnd = (-abs(bnd), abs(bnd))
     return clip_gradient(x, *bnd)
+
+
+def _extract_sample_shape(shape_or_init):
+    # shape_or_init is either a pytree of shapes 
+    # or a init function that take a key and give an init x
+    if not callable(shape_or_init): # is shape
+        sample_shape = shape_or_init
+    else: # is init function
+        _dummy_key = jax.random.PRNGKey(0)
+        init_sample = shape_or_init(_dummy_key)
+        sample_shape = jax.tree_map(lambda a: onp.array(a.shape), init_sample)
+    return sample_shape
+
+
+def _gen_init_from_refresh(refresh_fn, shape_or_init):
+    # shape_or_init is either a pytree of shapes 
+    # or a init function that take a key and give an init x
+    if not callable(shape_or_init):
+        size, unravel = ravel_shape(shape_or_init)
+        mu, sigma = 0., 1.
+        raw_init = lambda key: jax.random.normal(key, (size,)) * sigma + mu
+    else:
+        from jax.flatten_util import ravel_pytree
+        raw_init, unravel = lambda key: ravel_pytree(shape_or_init(key))
+
+    def init(key, params):
+        sample = raw_init(key)
+        return refresh_fn((sample,), params)
+
+    return init

@@ -50,7 +50,7 @@ def shared_sampler_test(sampler, jit=True):
     
 def test_sampler_gaussian():
     sampler = make_test_sampler("gaussian")
-    shared_sampler_test(sampler, jit=False)
+    shared_sampler_test(sampler, jit=True)
 
 
 @pytest.mark.slow
