@@ -57,8 +57,9 @@ class SimpleOrbital(nn.Module):
     @nn.compact
     def __call__(self, x: Array) -> Array:
         n_el = x.shape[-2]
+        n_dim = x.shape[-1]
         n_ion = self.ions.shape[-2]
-        n_feature = n_ion * 4
+        n_feature = n_ion * (n_dim + 1)
         resnet = build_mlp(
             [n_feature]*self.n_hidden + [self.n_orb], 
             residual=True, activation=self.activation, param_dtype=_t_real)
