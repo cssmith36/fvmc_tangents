@@ -1,6 +1,6 @@
-import vdmc
+import fvmc
 
-cfg = vdmc.config.default()
+cfg = fvmc.config.default()
 
 cfg.verbosity = "INFO"
 cfg.multi_device = True
@@ -9,4 +9,4 @@ cfg.optimize.iterations = 10
 cfg.log.stat_every = 1
 
 if __name__ == "__main__":
-    vdmc.train.main(cfg)
+    fvmc.train.main(cfg)

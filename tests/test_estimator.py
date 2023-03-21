@@ -5,7 +5,7 @@ import jax
 import numpy as np
 from jax import numpy as jnp
 
-from vdmc.estimator import build_eval_local, build_eval_total
+from fvmc.estimator import build_eval_local, build_eval_total
 from .test_hamiltonian import make_test_log_f, make_test_ions, make_test_x
 
 

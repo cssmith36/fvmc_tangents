@@ -5,7 +5,7 @@ import numpy as np
 from jax import numpy as jnp
 from functools import partial
 
-from vdmc.hamiltonian import calc_potential_energy, calc_kinetic_energy, calc_local_energy
+from fvmc.hamiltonian import calc_potential_energy, calc_kinetic_energy, calc_local_energy
 
 
 def make_test_log_f():

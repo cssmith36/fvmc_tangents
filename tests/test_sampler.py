@@ -3,7 +3,7 @@ import jax
 import numpy as np
 from jax import numpy as jnp
 
-from vdmc.sampler import choose_sampler_builder, make_batched, make_multistep, make_chained
+from fvmc.sampler import choose_sampler_builder, make_batched, make_multistep, make_chained
 
 
 _mean = 0.5

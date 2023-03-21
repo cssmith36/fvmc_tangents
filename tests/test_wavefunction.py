@@ -5,8 +5,8 @@ import jax
 import numpy as np
 from jax import numpy as jnp
 
-from vdmc.utils import pdist
-from vdmc.wavefunction import Jastrow, SimpleOrbital, Slater, build_jastrow_slater
+from fvmc.utils import pdist
+from fvmc.wavefunction import Jastrow, SimpleOrbital, Slater, build_jastrow_slater
 
 
 def make_collapse_conf():

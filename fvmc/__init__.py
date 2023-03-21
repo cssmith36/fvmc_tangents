@@ -8,7 +8,7 @@ del _jax_config
 
 import logging
 logging.basicConfig(force=True, format='# [%(asctime)s] %(levelname)s: %(message)s')
-LOGGER = logging.getLogger("vdmc")
+LOGGER = logging.getLogger("fvmc")
 del logging
 
 from . import (
