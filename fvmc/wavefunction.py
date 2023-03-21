@@ -11,7 +11,7 @@ from .utils import build_mlp
 
 # follow the TwoBodyExpDecay class in vmcnet
 class Jastrow(nn.Module):
-    """Isotropic exponential decay two-body Jastrow model.
+    r"""Isotropic exponential decay two-body Jastrow model.
     
     The decay is isotropic in the sense that each electron-nuclei and electron-electron
     term is isotropic, i.e. radially symmetric. The computed interactions are:
@@ -43,7 +43,7 @@ class Jastrow(nn.Module):
 
     
 class SimpleOrbital(nn.Module):
-    """Single particle orbital by a simple resnet
+    r"""Single particle orbital by a simple resnet
 
     for each electron i, taking [x_i - R_I, |x_i - R_I|, ...] as input
     and output a vector of size n_orb, correspinding to \psi_k(x_i)
@@ -73,7 +73,7 @@ class SimpleOrbital(nn.Module):
 
 
 class Slater(nn.Module):
-    """Slater determinant from single particle orbitals
+    r"""Slater determinant from single particle orbitals
     
     Separate the electrons into different spins and calculate orbitals for both.
     if full_det is True, use one large determinant. Otherwise use two small ones.
@@ -117,7 +117,7 @@ class Slater(nn.Module):
 
 
 class ProductModel(nn.Module):
-    """Pruduct of multiple model results.
+    r"""Pruduct of multiple model results.
     
     Assuming the models returns in log scale. 
     The signature of each submodel can either be pure: x -> log(f(x)) 

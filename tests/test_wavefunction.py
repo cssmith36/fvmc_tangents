@@ -75,6 +75,7 @@ def test_slater_antisymm(full_det, spin):
     slater = Slater(ions, elems, full_det=full_det, orbital_args={"n_hidden": 1})
     params = slater.init(_key0, x)
 
+    x = x + jax.random.normal(_key0, x.shape)
     iperm = jnp.arange(n_el, dtype=int).at[:2].set([1,0])
     px = x[:, iperm, :]
     

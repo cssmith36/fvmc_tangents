@@ -22,7 +22,7 @@ _t_cplx = complex
 # _t_cplx = jnp.complex64
 
 # _t_real = jnp.float64
-# _t_cplx = jnp.comple128
+# _t_cplx = jnp.complex128
 
 
 def adaptive_split(key, num=2, multi_device=False):
