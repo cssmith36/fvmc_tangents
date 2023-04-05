@@ -5,7 +5,7 @@ from functools import partial
 import kfac_jax
 
 from .utils import PMAP_AXIS_NAME, PmapAxis, ith_output
-from .hamiltonian import calc_kinetic_energy, calc_potential_energy
+from .hamiltonian import calc_local_energy
 
 
 def exp_shifted(x, normalize=None, pmap_axis_name=PMAP_AXIS_NAME):
@@ -47,13 +47,10 @@ def build_eval_local(model, ions, elems):
     """
 
     def eval_local(params, x):
-        log_psi_fn = ith_output(partial(model.apply, params), 1)
-        eloc = (calc_kinetic_energy(log_psi_fn, x) 
-                + calc_potential_energy(ions, elems, x))
+        log_psi_abs = ith_output(partial(model.apply, params), 1)
+        eloc = calc_local_energy(log_psi_abs, ions, elems, x)
         sign, logf = model.apply(params, x)
-        return (jnp.stack([eloc, eloc.conj()], -1),
-                jnp.stack([sign, sign.conj()], -1),
-                jnp.stack([logf, logf.conj()], -1))
+        return eloc, sign, logf
 
     return eval_local
 
@@ -100,7 +97,8 @@ def build_eval_total(eval_local_fn, energy_clipping=0.,
         where \psi is the wavefunction, E_l is the (clipped) local energy, 
         E_tot is the estimated total energy, ^c stands for conjugation,
         and #[...] stands for stop gradient. One can easily check that 
-        this form will give the correct gradient estimation.        
+        this form will give the correct gradient estimation. 
+        Note that instead of doing the h.c., we are using 2 * Real[...].
         """
         # data is a tuple of sample and log of sampling weight
         x, logsw = data
@@ -108,21 +106,17 @@ def build_eval_total(eval_local_fn, energy_clipping=0.,
         eloc, sign, logf = batch_local(params, x)
 
         # calculating relative weights for stats
-        eloc_r, sign_r, logf_r = eloc.mean(-1), sign.prod(-1), logf.sum(-1)
-        rel_w, lshift = exp_shifted(logf_r - logsw, 
+        # eloc_r, sign_r, logf_r = eloc.mean(-1), sign.prod(-1), logf.sum(-1)
+        rel_w, lshift = exp_shifted(2*logf - logsw, 
             normalize="mean", pmap_axis_name=paxis.name)
         tot_w = paxis.all_mean(rel_w) # should be just 1, but provide correct gradient
-        # compute averages and total energy
-        avg_es = paxis.all_mean((eloc_r * sign_r) * rel_w).real # averaged (sign * eloc)
-        avg_s = paxis.all_mean(sign_r * rel_w).real # averaged sign
-        etot = avg_es / avg_s
-        # compute variances
-        var_e = paxis.all_mean(jnp.abs(eloc_r - etot)**2 * sign_r * rel_w) / avg_s
-        var_s = paxis.all_mean(jnp.abs(sign_r - avg_s/tot_w)**2 * rel_w) / tot_w
+        # compute total energy
+        etot = paxis.all_mean((eloc) * rel_w).real / tot_w
+        # compute variance
+        var_e = paxis.all_mean(jnp.abs(eloc - etot)**2 * rel_w) / tot_w
         # form aux data dict, divide tot_w for correct gradient
         aux = dict(
-            e_tot = etot, avg_es = avg_es/tot_w, avg_s = avg_s/tot_w,
-            var_e = var_e, var_s = var_s, log_shift = lshift
+            e_tot = etot, var_e = var_e, log_shift = lshift
         )
 
         # clipping the local energy (for making the loss)
@@ -132,16 +126,16 @@ def build_eval_total(eval_local_fn, energy_clipping=0.,
             eclip = clip_around(eloc, etot, energy_clipping * tv, stop_gradient=True)
         # make the conjugated term (with stopped gradient)
         eclip_c, sign_c, logf_c = map(
-            lambda x: lax.stop_gradient(jnp.flip(x, -1)), 
+            lambda x: lax.stop_gradient(x.conj()), 
             (eclip, sign, logf))
         # make normalized psi_sqr, grad w.r.t it is equivalent to grad of log psi
-        log_shifted = logf + logf_c - logsw[..., None]
+        log_shifted = logf + logf_c - logsw
         if grad_stablizing: # substract the averaged log psi (like baseline)
             log_shifted -= paxis.all_mean(log_shifted)
-        psi_sqr = jnp.exp(log_shifted) * sign * sign_c / lax.stop_gradient(avg_s)
-        kfac_jax.register_squared_error_loss(psi_sqr, weight=0.5)
+        psi_sqr = jnp.exp(log_shifted)
+        kfac_jax.register_squared_error_loss(psi_sqr[:, None])
         e_diff = lax.stop_gradient(eclip_c - etot)
-        loss = paxis.all_mean((psi_sqr * e_diff).sum(-1)) # sum(-1) for h.c.
+        loss = paxis.all_mean(2 * (psi_sqr * e_diff).real) # 2 * real for h.c.
         
         return loss, aux
 

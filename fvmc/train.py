@@ -186,8 +186,8 @@ def run(step_fn, train_state, iterations, log_cfg):
     log_cfg = ConfigDict(log_cfg)
     if jax.process_index() == 0:
         writer = SummaryWriter(log_cfg.stat_path)
-    print_fields = {"step": "", "e_tot": ".4f", 
-                    "avg_s": ".4f", "var_e": ".3e", 
+    print_fields = {"step": "", 
+                    "e_tot": ".4f", "var_e": ".3e", 
                     "acc": ".2f", "lr": ".2e"} 
     printer = Printer(print_fields, time_format=".2f")
 

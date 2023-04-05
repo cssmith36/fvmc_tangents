@@ -35,11 +35,11 @@ def test_eval_local_shape():
     a = None
     x = make_test_x()
     eloc, sign, logf = eval_local(a, x)
-    assert eloc.shape == sign.shape == logf.shape == (2,)
+    assert eloc.shape == sign.shape == logf.shape == tuple()
 
     bx = jnp.stack([x, x, x], 0) #batch dim has size 3
     beloc, bsign, blogf = jax.vmap(eval_local, (None, 0))(a, bx)
-    assert beloc.shape == bsign.shape == blogf.shape == (3, 2)
+    assert beloc.shape == bsign.shape == blogf.shape == (3,)
 
 
 @pytest.mark.parametrize("clipping", [0., 0.75])
@@ -53,7 +53,7 @@ def test_eval_total(clipping):
     def eval_local(params, x):
         eloc = local_energy(x)
         sign, logf = model.apply(params, x)
-        return jnp.array([eloc, eloc]), jnp.array([sign, sign]), jnp.array([logf, logf])
+        return eloc, sign, logf
 
     a = 3.5
     x = make_test_x()
