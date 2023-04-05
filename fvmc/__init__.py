@@ -11,16 +11,19 @@ logging.basicConfig(force=True, format='# [%(asctime)s] %(levelname)s: %(message
 LOGGER = logging.getLogger("fvmc")
 del logging
 
-from . import (
-    utils,
-    hamiltonian,
-    wavefunction,
-    sampler,
-    estimator,
-    optimizer,
-    config,
-    train,
-)
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", category=DeprecationWarning)
+    from . import (
+        utils,
+        hamiltonian,
+        wavefunction,
+        sampler,
+        estimator,
+        optimizer,
+        config,
+        train,
+    )
 
 # __all__ = [
 #     "utils",
