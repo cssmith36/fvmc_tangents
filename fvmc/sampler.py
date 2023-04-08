@@ -1,16 +1,15 @@
+import dataclasses
+from functools import partial
+from typing import Callable, Dict, NamedTuple, Tuple, Union
+
 import jax
+import numpy as onp
 from jax import lax
 from jax import numpy as jnp
-import dataclasses
-import numpy as onp
-from functools import partial
-from typing import NamedTuple, Callable, Tuple, Union, Dict
 
+from .utils import (Array, PyTree, adaptive_split, clip_gradient, ravel_shape,
+                    tree_map, tree_where)
 from .wavefunction import nn
-from .utils import PyTree, Array
-from .utils import adaptive_split
-from .utils import ravel_shape, tree_where, tree_map, clip_gradient
-
 
 KeyArray = Array
 Params = PyTree

@@ -1,11 +1,12 @@
+from functools import partial
+
 import jax
+import kfac_jax
 from jax import lax
 from jax import numpy as jnp
-from functools import partial
-import kfac_jax
 
-from .utils import PMAP_AXIS_NAME, PmapAxis, ith_output
 from .hamiltonian import calc_local_energy
+from .utils import PMAP_AXIS_NAME, PmapAxis, ith_output
 
 
 def exp_shifted(x, normalize=None, pmap_axis_name=PMAP_AXIS_NAME):

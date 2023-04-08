@@ -1,20 +1,20 @@
+from functools import partial
+from typing import NamedTuple, Optional, Tuple, Union
+
 import jax
 import kfac_jax
 from jax import numpy as jnp
 from flax import linen as nn
 from ml_collections import ConfigDict
 from tensorboardX import SummaryWriter
-from typing import NamedTuple, Tuple, Optional, Union
-from functools import partial
 
 from . import LOGGER
-from .utils import PyTree, Array
-from .utils import Printer, save_checkpoint, load_pickle, cfg_to_yaml
-from .utils import PAXIS, adaptive_split, multi_process_name
-from .wavefunction import build_jastrow_slater
-from .sampler import build_sampler, make_batched, make_multistep
 from .estimator import build_eval_local, build_eval_total
-from .optimizer import build_optimizer, build_lr_schedule
+from .optimizer import build_lr_schedule, build_optimizer
+from .sampler import build_sampler, make_batched, make_multistep
+from .utils import (PAXIS, Array, Printer, PyTree, adaptive_split, cfg_to_yaml,
+                    load_pickle, multi_process_name, save_checkpoint)
+from .wavefunction import build_jastrow_slater
 
 
 class SysInfo(NamedTuple):

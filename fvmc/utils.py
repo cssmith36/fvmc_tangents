@@ -1,18 +1,19 @@
+import os
+import pickle
+import time
+import dataclasses
+from functools import partial, reduce
+from typing import Any, Callable, Dict, Optional, Sequence, Union
+
 import jax
 from jax import lax
 from jax import numpy as jnp
 from jax import scipy as jsp
-from jax.tree_util import tree_map
 from flax import linen as nn
-from ml_collections import ConfigDict
-from typing import Dict, Sequence, Union, Callable, Any, Optional
-from functools import partial, reduce
-import dataclasses
-import pickle
-import time
-import os
-
 from jax.numpy import ndarray as Array
+from jax.tree_util import tree_map
+from ml_collections import ConfigDict
+
 PyTree = Any
 
 _t_real = float

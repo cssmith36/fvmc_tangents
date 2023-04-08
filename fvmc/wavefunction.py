@@ -1,12 +1,11 @@
+from dataclasses import field as _field
+from typing import Optional, Sequence, Tuple, Union
+
 import jax
 from jax import numpy as jnp
 from flax import linen as nn
-from typing import Optional, Tuple, Sequence, Union
-from dataclasses import field as _field
 
-from .utils import Array
-from .utils import diffmat, cdist, pdist, fix_init, _t_real
-from .utils import build_mlp
+from .utils import Array, _t_real, build_mlp, cdist, diffmat, fix_init, pdist
 
 
 # follow the TwoBodyExpDecay class in vmcnet
