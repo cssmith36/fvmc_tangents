@@ -12,6 +12,7 @@ from jax import scipy as jsp
 from flax import linen as nn
 from jax.numpy import ndarray as Array
 from jax.tree_util import tree_map
+from chex import ArrayTree
 from ml_collections import ConfigDict
 
 PyTree = Any

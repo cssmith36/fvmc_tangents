@@ -214,7 +214,7 @@ def build_optimizer(
         multi_device=False,
         pmap_axis_name=PMAP_AXIS_NAME,
         **kwargs
-    ):
+):
     # build lr schedule
     if lr_schedule is None:
         lr_schedule = {}

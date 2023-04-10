@@ -3,8 +3,8 @@ from typing import NamedTuple, Optional, Tuple, Union
 
 import jax
 import kfac_jax
-from jax import numpy as jnp
 from flax import linen as nn
+from jax import numpy as jnp
 from ml_collections import ConfigDict
 from tensorboardX import SummaryWriter
 
@@ -12,8 +12,9 @@ from . import LOGGER
 from .estimator import build_eval_local, build_eval_total
 from .optimizer import build_lr_schedule, build_optimizer
 from .sampler import build_sampler, make_batched, make_multistep
-from .utils import (PAXIS, Array, Printer, PyTree, adaptive_split, cfg_to_yaml,
-                    load_pickle, multi_process_name, save_checkpoint)
+from .utils import (PAXIS, Array, ArrayTree, Printer, PyTree, adaptive_split,
+                    cfg_to_yaml, load_pickle, multi_process_name,
+                    save_checkpoint)
 from .wavefunction import build_jastrow_slater
 
 
@@ -25,9 +26,9 @@ class SysInfo(NamedTuple):
 
 class TrainingState(NamedTuple):
     key: Array
-    params: PyTree
-    mc_state: PyTree
-    opt_state: PyTree
+    params: ArrayTree
+    mc_state: ArrayTree
+    opt_state: ArrayTree
 
 
 def trim_training_state(train_state):

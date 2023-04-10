@@ -7,13 +7,13 @@ import numpy as onp
 from jax import lax
 from jax import numpy as jnp
 
-from .utils import (Array, PyTree, adaptive_split, clip_gradient, ravel_shape,
-                    tree_map, tree_where)
+from .utils import (Array, ArrayTree, PyTree, adaptive_split, clip_gradient,
+                    ravel_shape, tree_map, tree_where)
 from .wavefunction import nn
 
 KeyArray = Array
-Params = PyTree
-Sample = PyTree
+Params = ArrayTree
+Sample = ArrayTree
 State = Tuple[Sample, ...] # first element of state is always current sample
 Data = Tuple[Sample, Array] # data is a tuple of sample and its log prob
 Info = Dict[str, PyTree] # info is a dict containing stats of the sampling process
