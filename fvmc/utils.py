@@ -307,6 +307,8 @@ class PmapAxis:
             pax_fn = getattr(self, f"p{nm}")
             all_fn = compose(pax_fn, jnp_fn)
             object.__setattr__(self, f"all_{nm}", all_fn)
+        object.__setattr__(self, "all_average", 
+            lambda a, w: self.all_mean(a * w) / self.all_mean(w))
 
 PMAP_AXIS_NAME = "_pmap_axis"
 PAXIS = PmapAxis(PMAP_AXIS_NAME)

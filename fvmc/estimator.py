@@ -22,11 +22,6 @@ def exp_shifted(x, normalize=None, pmap_axis_name=PMAP_AXIS_NAME):
     return exp, stblz
 
 
-def weighted_average(a, weights, pmap_axis_name=PMAP_AXIS_NAME):
-    paxis = PmapAxis(pmap_axis_name)
-    return paxis.all_mean((a) * weights) / paxis.all_mean(weights)
-
-
 def clip_around(a, target, half_range, stop_gradient=True):
     c_min = target - half_range
     c_max = target + half_range
@@ -191,9 +186,9 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=0.,
         rel_w, lshift = exp_shifted(2*logf.real - logsw, 
             normalize=None, pmap_axis_name=paxis.name)
         # compute total energy
-        etot = weighted_average(eloc.real, rel_w)
+        etot = paxis.all_average(eloc.real, rel_w)
         # compute variance
-        var_e = weighted_average(jnp.abs(eloc - etot)**2, rel_w)
+        var_e = paxis.all_average(jnp.abs(eloc - etot)**2, rel_w)
         # form aux data dict, divide tot_w for correct gradient
         aux = dict(
             e_tot = etot, var_e = var_e, _log_shift = lshift
@@ -202,7 +197,7 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=0.,
         # clipping the local energy (for making the loss)
         eclip = eloc
         if energy_clipping > 0:
-            tv = weighted_average(jnp.abs(eloc - etot).mean(-1), rel_w)
+            tv = paxis.all_average(jnp.abs(eloc - etot).mean(-1), rel_w)
             eclip = clip_around(eloc, etot, energy_clipping * tv, stop_gradient=True)
         # make the conjugated term (with stopped gradient)
         eclip_c, sign_c, logf_c = map(
@@ -212,7 +207,7 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=0.,
         log_psi2_rel = logf + logf_c - logsw
         rel_w_d = lax.stop_gradient(rel_w) # detached
         if grad_stablizing: # substract the averaged log psi (like baseline)
-            log_psi2_rel -= weighted_average(log_psi2_rel, rel_w_d)
+            log_psi2_rel -= paxis.all_average(log_psi2_rel, rel_w_d)
         psi_sqr = jnp.exp(log_psi2_rel - lshift)
         kfac_jax.register_squared_error_loss(psi_sqr[:, None])
         e_diff = lax.stop_gradient(eclip_c - etot)

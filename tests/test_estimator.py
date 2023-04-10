@@ -5,7 +5,7 @@ import jax
 import numpy as np
 from jax import numpy as jnp
 
-from fvmc.estimator import build_eval_local, build_eval_total
+from fvmc.estimator import build_eval_local, build_eval_total, build_eval_total_weighted
 from .test_hamiltonian import make_test_log_f, make_test_ions, make_test_x
 
 
@@ -42,8 +42,9 @@ def test_eval_local_shape():
     assert beloc.shape == bsign.shape == blogf.shape == (3,)
 
 
+@pytest.mark.parametrize("weighted", [True, False])
 @pytest.mark.parametrize("clipping", [0., 0.75])
-def test_eval_total(clipping):
+def test_eval_total(clipping, weighted):
     log_psi = lambda a, x: (jnp.sign(x.mean(-1)-2), a * jnp.sum(jnp.square(x), axis=(-1)))
     model = make_dummy_model(log_psi)
 
@@ -73,7 +74,9 @@ def test_eval_total(clipping):
     target_grad_energy = 2.0 * jnp.mean(
         (clipped_local_energies - target_energy) * log_psi_grad_a
     )
-    eval_total = build_eval_total(eval_local, clipping,)
+    
+    eval_total = (build_eval_total_weighted if weighted
+                  else build_eval_total)(eval_local, clipping,)
     eval_total_grad = jax.value_and_grad(eval_total, has_aux=True)
 
     # loss, aux = eval_total(a, (x, log_sample))
