@@ -6,20 +6,7 @@ from jax import lax
 from jax import numpy as jnp
 
 from .hamiltonian import calc_local_energy
-from .utils import PMAP_AXIS_NAME, PmapAxis, ith_output
-
-
-def exp_shifted(x, normalize=None, pmap_axis_name=PMAP_AXIS_NAME):
-    paxis = PmapAxis(pmap_axis_name)
-    stblz = paxis.all_max(lax.stop_gradient(x))
-    exp = jnp.exp(x - stblz)
-    if normalize:
-        assert normalize.lower() in ("sum", "mean"), "invalid normalize option"
-        reducer = getattr(paxis, f"all_{normalize.lower()}")
-        total = reducer(lax.stop_gradient(exp))
-        exp /= total
-        stblz += jnp.log(total)
-    return exp, stblz
+from .utils import PMAP_AXIS_NAME, PmapAxis, ith_output, exp_shifted
 
 
 def clip_around(a, target, half_range, stop_gradient=True):
@@ -184,7 +171,7 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=0.,
 
         # calculating relative weights for stats
         rel_w, lshift = exp_shifted(2*logf.real - logsw, 
-            normalize=None, pmap_axis_name=paxis.name)
+            normalize="mean", pmap_axis_name=paxis.name)
         # compute total energy
         etot = paxis.all_average(eloc.real, rel_w)
         # compute variance

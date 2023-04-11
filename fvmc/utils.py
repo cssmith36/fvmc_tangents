@@ -313,3 +313,16 @@ class PmapAxis:
 
 PMAP_AXIS_NAME = "_pmap_axis"
 PAXIS = PmapAxis(PMAP_AXIS_NAME)
+
+
+def exp_shifted(x, normalize=None, pmap_axis_name=PMAP_AXIS_NAME):
+    paxis = PmapAxis(pmap_axis_name)
+    stblz = paxis.all_max(lax.stop_gradient(x))
+    exp = jnp.exp(x - stblz)
+    if normalize:
+        assert normalize.lower() in ("sum", "mean"), "invalid normalize option"
+        reducer = getattr(paxis, f"all_{normalize.lower()}")
+        total = reducer(lax.stop_gradient(exp))
+        exp /= total
+        stblz += jnp.log(total)
+    return exp, stblz
