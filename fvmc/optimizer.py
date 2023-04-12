@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# this file is borrowed from kfac-jax library
+# part of this file is borrowed from kfac-jax library
 # https://github.com/deepmind/kfac-jax/blob/main/examples/optimizers.py
 
 import kfac_jax
@@ -22,6 +22,7 @@ import jax
 import jax.numpy as jnp
 from . import curvature_tags_and_blocks
 from .utils import PMAP_AXIS_NAME
+from .preconditioner import scale_by_fisher_inverse
 
 
 OptaxState = Any
@@ -60,15 +61,13 @@ class OptaxWrapper:
     def __init__(
             self,
             value_and_grad_func: kfac_jax.optimizer.ValueAndGradFunc,
-            optax_factory: Callable[..., optax.GradientTransformation],
-            learning_rate: optax.ScalarOrSchedule,
+            optax_optimizer: Callable[..., optax.GradientTransformation],
             value_func_has_aux: bool = False,
             value_func_has_state: bool = False,
             value_func_has_rng: bool = False,
             multi_device: bool = False,
             pmap_axis_name: str = "optax_axis",
             batch_process_func: Optional[Callable[[Any], Any]] = None,
-            **optax_kwargs
     ):
         """Initializes the Optax wrapper.
 
@@ -79,10 +78,7 @@ class OptaxWrapper:
               loss, loss_grads = value_and_grad_func(params, batch)
             If `value_func_has_aux` is `True` then the interface should be:
               (loss, aux), loss_grads = value_and_grad_func(params, batch)
-          optax_factory: Python Callable. A function that returns an optax gradient 
-            transform. It should take `learning_rate` as one of its arguments.
-            The function will be warpped by optax.inject_hyperparams.
-          learning_rate: Scalar or a callable schedule. A global scaling factor.
+          optax_optimizer: The optax optimizer to be wrapped.
           value_func_has_aux: Boolean. Specifies whether the provided callable
             `value_and_grad_func` returns the loss value only, or also some
             auxiliary data. (Default: `False`)
@@ -101,7 +97,7 @@ class OptaxWrapper:
         self._value_func_has_aux = value_func_has_aux
         self._value_func_has_state = value_func_has_state
         self._value_func_has_rng = value_func_has_rng
-        self._optax_optimizer = optax.inject_hyperparams(optax_factory)(learning_rate=learning_rate, **optax_kwargs)
+        self._optax_optimizer = optax_optimizer
         self._batch_process_func = batch_process_func or (lambda x: x)
         self.multi_device = multi_device
         self._pmap_axis_name = pmap_axis_name
@@ -155,12 +151,15 @@ class OptaxWrapper:
         if self.multi_device:
             stats, grads = jax.lax.pmean((stats, grads), axis_name=self._pmap_axis_name)
         # Compute and apply updates via our optimizer.
-        updates, new_state = self._optax_optimizer.update(grads, state, params)
+        updates, new_state = self._optax_optimizer.update(grads, state, params, data=batch)
         new_params = optax.apply_updates(params, updates)
 
         # Add step and batch size info
-        stats["step"] = new_state.count
-        stats["learning_rate"] = new_state.hyperparams["learning_rate"]
+        if isinstance(new_state, optax.InjectHyperparamsState):
+            stats["step"] = new_state.count
+            stats["learning_rate"] = new_state.hyperparams["learning_rate"]
+        else:
+            stats["step"] = stats["learning_rate"] = jnp.nan
         batch_size = jax.tree_util.tree_leaves(batch)[0].shape[0]
         stats["batch_size"] = batch_size * jax.device_count()
         stats["data_seen"] = stats["batch_size"] * stats["step"]
@@ -213,11 +212,14 @@ def build_optimizer(
         value_func_has_rng=False,
         multi_device=False,
         pmap_axis_name=PMAP_AXIS_NAME,
+        log_prob_func=None,
         **kwargs
 ):
     # build lr schedule
     if lr_schedule is None:
         lr_schedule = {}
+    if isinstance(lr_schedule, float):
+        lr_schedule = {"base": lr_schedule}
     if not callable(lr_schedule):
         lr_schedule = build_lr_schedule(**lr_schedule)
 
@@ -249,11 +251,30 @@ def build_optimizer(
                                   )
     else:
         from optax._src import alias as optax_alias
-        opt_factory = getattr(optax_alias, name)
-        # optax_optimizer = opt_fn(lr_schedule, **kwargs)
+
+        def opt_factory(learning_rate):
+            clipping = kwargs.pop("norm_constraint", None)
+            if name.lower() in ("sr", "ngd"):
+                assert log_prob_func is not None
+                precond = scale_by_fisher_inverse(
+                    log_prob_fn=log_prob_func,
+                    pmap_axis_name=pmap_axis_name,
+                    **kwargs)
+                opt = optax.chain(
+                    precond, 
+                    optax_alias._scale_by_learning_rate(lr_schedule))
+            else:
+                opt = getattr(optax_alias, name)(
+                    learning_rate=lr_schedule, 
+                    **kwargs)
+            if clipping:
+                opt = optax.chain(opt, optax.clip_by_global_norm(clipping))
+            return opt
+
+        optax_optimizer = optax.inject_hyperparams(opt_factory)(lr_schedule)
+        
         return OptaxWrapper(value_and_grad_func,
-                            optax_factory=opt_factory,
-                            learning_rate=lr_schedule,
+                            optax_optimizer=optax_optimizer,
                             value_func_has_aux=value_func_has_aux,
                             value_func_has_state=value_func_has_state,
                             value_func_has_rng=value_func_has_rng,

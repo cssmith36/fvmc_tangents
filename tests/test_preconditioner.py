@@ -6,7 +6,7 @@ import numpy as np
 from jax import numpy as jnp
 from jax.flatten_util import ravel_pytree
 
-from fvmc.preconditioner import build_fisher_preconditioner
+from fvmc.preconditioner import scale_by_fisher_inverse
 
 
 def _setup_fisher():
@@ -46,7 +46,7 @@ def test_fisher_inverse_cg(damping, mixing, weighted):
         log_prob_fn
     ) = _setup_fisher()
 
-    fisher_precond = build_fisher_preconditioner(
+    fisher_precond = scale_by_fisher_inverse(
         log_prob_fn, 
         damping=damping, 
         mixing_factor=mixing,

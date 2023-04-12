@@ -19,7 +19,7 @@ class FisherPrecondState(NamedTuple):
     mixing_factor: float
 
 
-def build_fisher_preconditioner(
+def scale_by_fisher_inverse(
         log_prob_fn: Callable,
         damping: float = 1e-3,
         maxiter: Optional[int] = None,
