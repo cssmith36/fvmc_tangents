@@ -3,6 +3,7 @@ from typing import NamedTuple, Optional, Tuple, Union
 
 import jax
 import kfac_jax
+import numpy as onp
 from flax import linen as nn
 from jax import numpy as jnp
 from ml_collections import ConfigDict
@@ -15,7 +16,7 @@ from .sampler import build_sampler, make_batched, make_multistep
 from .utils import (PAXIS, Array, ArrayTree, Printer, PyTree, adaptive_split,
                     cfg_to_yaml, load_pickle, multi_process_name,
                     save_checkpoint)
-from .wavefunction import build_jastrow_slater
+from .wavefunction import build_jastrow_slater, log_prob_from_model
 
 
 class SysInfo(NamedTuple):
@@ -84,6 +85,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
     assert (tot_elec - spin) % 2 == 0, \
         f"system with {tot_elec} electrons cannot have spin {spin}"
     n_elec = (tot_elec + spin) // 2, (tot_elec - spin) // 2
+    elec_shape = onp.array([tot_elec, 3])
     system = SysInfo(ions, elems, n_elec)
 
     # make wavefunction
@@ -92,6 +94,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
     else:
         ansatz_cfg = ConfigDict(ansatz_cfg)
         ansatz = build_jastrow_slater(ions, elems, spin, **ansatz_cfg)
+    log_prob_fn = log_prob_from_model(ansatz)
 
     # make estimators
     local_fn = build_eval_local(ansatz, ions, elems)
@@ -106,7 +109,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         LOGGER.warning("Sample size not divisible by batch size, rounding up")
     n_multistep = -(-n_sample // n_chain)
     n_batch = n_chain // n_device
-    raw_sampler = build_sampler(ansatz, tot_elec, **sample_cfg.sampler)
+    raw_sampler = build_sampler(log_prob_fn, elec_shape, **sample_cfg.sampler)
     sampler = make_multistep(raw_sampler, n_step=n_multistep, concat=False)
     sampler = make_batched(sampler, n_batch=n_batch, concat=True)
     sampler = jax.tree_map(PAXIS.pmap if multi_device else jax.jit, sampler)
@@ -121,6 +124,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         value_func_has_state=False,
         multi_device=multi_device,
         pmap_axis_name=PAXIS.name,
+        log_prob_func=log_prob_fn,
         **optimize_cfg.optimizer)
 
     # make training states 

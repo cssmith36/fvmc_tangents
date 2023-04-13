@@ -55,13 +55,14 @@ def choose_sampler_builder(name: str) -> Callable[..., MCSampler]:
     raise NotImplementedError(f"unsupported sampler type: {name}")
 
 
-def build_sampler(model: nn.Module, n_elec: int, 
-                 name: str, beta: float = 1, 
-                 **kwargs):
+def build_sampler(log_prob_fn: Callable[[Params, Sample], Array], 
+                  shape_or_init: Union[tuple, onp.ndarray, callable], 
+                  name: str, 
+                  beta: float = 1, 
+                  **kwargs):
     builder = choose_sampler_builder(name)
-    logdens_fn = lambda p, x: 2 * beta * model.apply(p, x)[1]
-    sample_shape = onp.array([n_elec, 3])
-    return builder(logdens_fn, sample_shape, **kwargs)
+    logdens_fn = lambda p, x: beta * log_prob_fn(p, x)
+    return builder(logdens_fn, shape_or_init, **kwargs)
 
 
 ##### Below are sampler transformations #####

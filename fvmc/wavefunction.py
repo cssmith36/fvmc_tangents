@@ -8,6 +8,10 @@ from flax import linen as nn
 from .utils import Array, _t_real, build_mlp, cdist, diffmat, fix_init, pdist
 
 
+def log_prob_from_model(model: nn.Module):
+    return lambda p, *args, **kwargs: 2 * model.apply(p, *args, **kwargs)[1]
+
+
 # follow the TwoBodyExpDecay class in vmcnet
 class Jastrow(nn.Module):
     r"""Isotropic exponential decay two-body Jastrow model.
