@@ -131,7 +131,7 @@ class ProductModel(nn.Module):
     submodels: Sequence[nn.Module]
 
     @nn.compact
-    def __call__(self, x: Array) -> Union[Array, Tuple[Array, Array]]:
+    def __call__(self, x: Array) -> Tuple[Array, Array]:
         sign = 1.
         logf = 0.
         with_sign = True # False will make the sign optional

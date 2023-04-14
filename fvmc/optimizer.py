@@ -29,6 +29,8 @@ OptaxState = Any
 
 
 KFAC_DEFAULTS = dict(
+    damping=1e-3,
+    momentum=0.0,
     l2_reg=0.0,
     estimation_mode="fisher_exact",
     inverse_update_period=1,
@@ -37,6 +39,15 @@ KFAC_DEFAULTS = dict(
     norm_constraint=1e-3,
     min_damping=1e-4,
     curvature_ema=0.95,
+)
+
+SR_DEFAULTS = dict(
+    damping=1e-3,
+    momentum=0.0,
+    maxiter=100,
+    mixing_factor=0.9,
+    use_weighted=False,
+    norm_constraint=1e-3,
 )
 
 
@@ -224,18 +235,18 @@ def build_optimizer(
         lr_schedule = build_lr_schedule(**lr_schedule)
 
     if name == "kfac":
+        options = {**KFAC_DEFAULTS, **kwargs}
         const_schedule = {"decay_power": None, "decay_time": None}
         momentum_schedule = build_lr_schedule(**{
-            "base": kwargs.pop("momentum", 0.0),
+            "base": options.pop("momentum", 0.0),
             **const_schedule,
-            **kwargs.pop("momentum_schedule", {})
+            **options.pop("momentum_schedule", {})
         })
         damping_schedule = build_lr_schedule(**{
-            "base": kwargs.pop("damping", 1e-3),
+            "base": options.pop("damping", 1e-3),
             **const_schedule,
-            **kwargs.pop("damping_schedule", {})
+            **options.pop("damping_schedule", {})
         })
-        options = {**KFAC_DEFAULTS, **kwargs}
         return kfac_jax.Optimizer(value_and_grad_func,
                                   value_func_has_aux=value_func_has_aux,
                                   value_func_has_state=value_func_has_state,
@@ -253,20 +264,23 @@ def build_optimizer(
         from optax._src import alias as optax_alias
 
         def opt_factory(learning_rate):
-            clipping = kwargs.pop("norm_constraint", None)
-            if name.lower() in ("sr", "ngd"):
+            using_sr = name.lower() in ("sr", "ngd")
+            options = {**SR_DEFAULTS, **kwargs} if using_sr else kwargs
+            clipping = options.pop("norm_constraint", None)
+            if using_sr:
                 assert log_prob_func is not None
+                momentum = options.pop("momentum", 0.0)
                 precond = scale_by_fisher_inverse(
                     log_prob_fn=log_prob_func,
                     pmap_axis_name=pmap_axis_name,
-                    **kwargs)
+                    **options)
                 opt = optax.chain(
-                    precond, 
-                    optax_alias._scale_by_learning_rate(lr_schedule))
+                    precond,
+                    optax.sgd(lr_schedule, momentum=momentum))
             else:
                 opt = getattr(optax_alias, name)(
                     learning_rate=lr_schedule, 
-                    **kwargs)
+                    **options)
             if clipping:
                 opt = optax.chain(opt, optax.clip_by_global_norm(clipping))
             return opt
@@ -279,5 +293,4 @@ def build_optimizer(
                             value_func_has_state=value_func_has_state,
                             value_func_has_rng=value_func_has_rng,
                             multi_device=multi_device,
-                            pmap_axis_name=pmap_axis_name,
-                            **kwargs)
+                            pmap_axis_name=pmap_axis_name)
