@@ -109,7 +109,11 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         LOGGER.warning("Sample size not divisible by batch size, rounding up")
     n_multistep = -(-n_sample // n_chain)
     n_batch = n_chain // n_device
-    raw_sampler = build_sampler(log_prob_fn, elec_shape, **sample_cfg.sampler)
+    raw_sampler = build_sampler(
+        log_prob_fn, 
+        elec_shape, 
+        name=sample_cfg.sampler,
+        **sample_cfg.get(sample_cfg.sampler, {}))
     sampler = make_multistep(raw_sampler, n_step=n_multistep, concat=False)
     sampler = make_batched(sampler, n_batch=n_batch, concat=True)
     sampler = jax.tree_map(PAXIS.pmap if multi_device else jax.jit, sampler)
@@ -118,6 +122,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
     lr_schedule = build_lr_schedule(**optimize_cfg.lr)
     optimizer = build_optimizer(
         loss_and_grad, 
+        name=optimize_cfg.optimizer,
         lr_schedule=lr_schedule,
         value_func_has_aux=True,
         value_func_has_rng=False,
@@ -125,7 +130,8 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         multi_device=multi_device,
         pmap_axis_name=PAXIS.name,
         log_prob_func=log_prob_fn,
-        **optimize_cfg.optimizer)
+        grad_clipping=optimize_cfg.get("grad_clipping", None),
+        **optimize_cfg.get(optimize_cfg.optimizer, {}))
 
     # make training states 
     if "states" in restart_cfg and restart_cfg.states:

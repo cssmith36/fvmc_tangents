@@ -46,11 +46,11 @@ KFAC_DEFAULTS = dict(
 
 SR_DEFAULTS = dict(
     damping=1e-3,
+    descender=None,
     momentum=0.0,
     maxiter=100,
     mixing_factor=0.9,
     use_weighted=False,
-    clip_norm=1.,
 )
 
 
@@ -227,6 +227,7 @@ def build_optimizer(
         multi_device=False,
         pmap_axis_name=PMAP_AXIS_NAME,
         log_prob_func=None,
+        grad_clipping=None,
         **kwargs
 ):
     # build lr schedule
@@ -268,9 +269,8 @@ def build_optimizer(
 
         using_sr = name.lower() in ("sr", "ngd")
         options = {**SR_DEFAULTS, **kwargs} if using_sr else kwargs
-        clipping = options.pop("clip_norm", None)
-        clip_transform = (optax.clip_by_global_norm(clipping) 
-                            if clipping else optax.identity())
+        clip_transform = (optax.clip_by_global_norm(grad_clipping) 
+                          if grad_clipping else optax.identity())
         if using_sr:
             assert log_prob_func is not None
             dname = options.pop("descender", None)

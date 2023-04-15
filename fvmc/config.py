@@ -29,9 +29,11 @@ def default() -> ConfigDict:
             "size": 2048,
             "chains": None,
             "burn_in": 100,
-            "sampler": {
-                "name": "mcmc",
-            }
+            "sampler": "mala",
+            "mcmc": {},
+            "mala": {},
+            "hmc": {},
+            "black": {},
         },
 
         "optimize": {
@@ -41,9 +43,10 @@ def default() -> ConfigDict:
                 "energy_clipping": 5.,
                 "grad_stablizing": True,
             },
-            "optimizer": {
-                "name": "kfac",
-            },
+            "optimizer": "kfac",
+            "grad_clipping": 1., # will not work for kfac
+            "kfac": {},
+            "sr": {},
         },
 
         "log": {
