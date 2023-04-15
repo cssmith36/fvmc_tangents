@@ -15,17 +15,20 @@
 # part of this file is borrowed from kfac-jax library
 # https://github.com/deepmind/kfac-jax/blob/main/examples/optimizers.py
 
+from functools import partial
+from typing import (Any, Callable, Iterator, Mapping, NamedTuple, Optional,
+                    Tuple, Union)
+
+import jax
 import kfac_jax
 import optax
-from typing import Optional, Any, Callable, Tuple, Mapping, Union, Iterator, NamedTuple
-import jax
-import jax.numpy as jnp
+from jax import numpy as jnp
+
 from . import curvature_tags_and_blocks
-from .utils import PMAP_AXIS_NAME
 from .preconditioner import scale_by_fisher_inverse
+from .utils import PMAP_AXIS_NAME
 
-
-OptaxState = Any
+OptaxState = optax.OptState
 
 
 KFAC_DEFAULTS = dict(
@@ -47,7 +50,7 @@ SR_DEFAULTS = dict(
     maxiter=100,
     mixing_factor=0.9,
     use_weighted=False,
-    norm_constraint=1e-3,
+    clip_norm=1.,
 )
 
 
@@ -254,8 +257,8 @@ def build_optimizer(
                                   multi_device=multi_device,
                                   pmap_axis_name=pmap_axis_name,
                                   learning_rate_schedule=lr_schedule,
-                                  momentum_schedule = momentum_schedule,
-                                  damping_schedule = damping_schedule,
+                                  momentum_schedule=momentum_schedule,
+                                  damping_schedule=damping_schedule,
                                   auto_register_kwargs=dict(
                                         graph_patterns=curvature_tags_and_blocks.GRAPH_PATTERNS),
                                   **options,
@@ -263,27 +266,29 @@ def build_optimizer(
     else:
         from optax._src import alias as optax_alias
 
-        def opt_factory(learning_rate):
-            using_sr = name.lower() in ("sr", "ngd")
-            options = {**SR_DEFAULTS, **kwargs} if using_sr else kwargs
-            clipping = options.pop("norm_constraint", None)
-            if using_sr:
-                assert log_prob_func is not None
-                momentum = options.pop("momentum", 0.0)
-                precond = scale_by_fisher_inverse(
-                    log_prob_fn=log_prob_func,
-                    pmap_axis_name=pmap_axis_name,
-                    **options)
-                opt = optax.chain(
-                    precond,
-                    optax.sgd(lr_schedule, momentum=momentum))
-            else:
-                opt = getattr(optax_alias, name)(
-                    learning_rate=lr_schedule, 
-                    **options)
-            if clipping:
-                opt = optax.chain(opt, optax.clip_by_global_norm(clipping))
-            return opt
+        using_sr = name.lower() in ("sr", "ngd")
+        options = {**SR_DEFAULTS, **kwargs} if using_sr else kwargs
+        clipping = options.pop("clip_norm", None)
+        clip_transform = (optax.clip_by_global_norm(clipping) 
+                            if clipping else optax.identity())
+        if using_sr:
+            assert log_prob_func is not None
+            dname = options.pop("descender", None)
+            momentum = options.pop("momentum", 0.0)
+            precond = scale_by_fisher_inverse(
+                log_prob_fn=log_prob_func,
+                pmap_axis_name=pmap_axis_name,
+                **options)
+            descender = (getattr(optax_alias, dname) if dname
+                         else partial(optax.sgd, momentum=momentum))
+            opt_factory = lambda learning_rate: optax.chain(
+                precond,
+                clip_transform,
+                descender(learning_rate))
+        else:
+            opt_factory = lambda learning_rate: optax.chain(
+                clip_transform,
+                getattr(optax_alias, name)(learning_rate, **options))
 
         optax_optimizer = optax.inject_hyperparams(opt_factory)(lr_schedule)
         
