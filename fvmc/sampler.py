@@ -171,7 +171,7 @@ def build_metropolis(logdens_fn, shape_or_init, sigma=0.05, steps=10):
     return MCSampler(sample, init, refresh)
 
 
-def build_langevin(logdens_fn, shape_or_init, tau=0.01, steps=10, grad_clipping=None):
+def build_langevin(logdens_fn, shape_or_init, tau=0.1, steps=10, grad_clipping=None):
     sample_shape = _extract_sample_shape(shape_or_init)
     xsize, unravel = ravel_shape(sample_shape)
     ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
