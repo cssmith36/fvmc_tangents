@@ -21,6 +21,7 @@ with warnings.catch_warnings():
         sampler,
         estimator,
         optimizer,
+        preconditioner,
         config,
         train,
     )
@@ -32,8 +33,9 @@ with warnings.catch_warnings():
 #     "sampler",
 #     "estimator",
 #     "optimizer",
+#     "preconditioner",
 #     "config",
-#     "train"
+#     "train",
 # ]
 
 # def __getattr__(name):

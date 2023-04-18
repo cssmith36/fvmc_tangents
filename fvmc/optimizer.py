@@ -269,7 +269,7 @@ def build_optimizer(
 
         using_sr = name.lower() in ("sr", "ngd")
         options = {**SR_DEFAULTS, **kwargs} if using_sr else kwargs
-        clip_transform = (optax.clip_by_global_norm(grad_clipping) 
+        clip_transform = (optax.adaptive_grad_clip(grad_clipping) 
                           if grad_clipping else optax.identity())
         if using_sr:
             assert log_prob_func is not None
