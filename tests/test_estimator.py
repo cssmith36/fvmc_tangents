@@ -43,7 +43,7 @@ def test_eval_local_shape():
 
 
 @pytest.mark.parametrize("weighted", [True, False])
-@pytest.mark.parametrize("clipping", [0., 0.75])
+@pytest.mark.parametrize("clipping", [None, 0.75])
 def test_eval_total(clipping, weighted):
     log_psi = lambda a, x: (jnp.sign(x.mean(-1)-2), a * jnp.sum(jnp.square(x), axis=(-1)))
     model = make_dummy_model(log_psi)
@@ -70,7 +70,7 @@ def test_eval_total(clipping, weighted):
     tv = jnp.abs(target_local_energies - target_energy).mean()
     clipped_local_energies = (jnp.clip(target_local_energies, 
         target_energy-clipping*tv, target_energy+clipping*tv)
-        if clipping > 0 else target_local_energies)
+        if clipping and clipping > 0 else target_local_energies)
     target_grad_energy = 2.0 * jnp.mean(
         (clipped_local_energies - target_energy) * log_psi_grad_a
     )

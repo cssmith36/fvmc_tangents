@@ -43,8 +43,9 @@ def build_eval_local(model, ions, elems):
     return eval_local
 
 
-def build_eval_total(eval_local_fn, energy_clipping=0., 
-                     grad_stablizing=False, pmap_axis_name=PMAP_AXIS_NAME):
+def build_eval_total(eval_local_fn, energy_clipping=None, 
+                     grad_stablizing=False, pmap_axis_name=PMAP_AXIS_NAME, 
+                     use_weighted=False):
     """Create a function that evaluates quantities on the whole batch of samples.
 
     The created function will take paramters and sampled data as input,
@@ -56,14 +57,17 @@ def build_eval_total(eval_local_fn, energy_clipping=0.,
             the local energy, sign and log of absolute value of wfn.
             Should return a tuple with shape ([..., 2], [..., 2], [..., 2]),
             where the last dim of size 2 corresponds to ket and bra (conj'd) results.
-        energy_clipping (float): If greater than zero, clip local energies that are
+        energy_clipping (float, optional): If greater than zero, clip local energies that are
             outside [E_t - n D, E_t + n D], where E_t is the mean local energy, n is
             this value and D the mean absolute deviation of the local energies.
-            Defaults to 0 (no clipping).
+            Defaults to None (no clipping).
         grad_stablizing (bool): If True, use a trick that substract the mean in the grad
             of log psi. This should give no contribution when there is no energy clipping
             because it is a constant times averaged E_loc - E_tot, which is zero. 
             But it will be helpful at the begining of training
+        pmap_axis_name (str): axis name used in pmap
+        use_weighted (bool): If True, use `build_eval_total_weighted`, which will
+            take the log of sample weight (`data[1]`) into account
 
     Returns:
         Callable with signature (params, data) -> (loss, aux) where data is a tuple of
@@ -71,6 +75,12 @@ def build_eval_total(eval_local_fn, energy_clipping=0.,
         the parameters that gives the correct gradient but its value is meaningless.
         aux is a dict that contains multiple statistical quantities calculated from the sample.
     """
+    if use_weighted:
+        return build_eval_total_weighted(
+            eval_local_fn, 
+            energy_clipping, 
+            grad_stablizing, 
+            pmap_axis_name)
 
     paxis = PmapAxis(pmap_axis_name)
     batch_local = jax.vmap(eval_local_fn, in_axes=(None, 0), out_axes=0)
@@ -101,7 +111,7 @@ def build_eval_total(eval_local_fn, energy_clipping=0.,
 
         # clipping the local energy (for making the loss)
         eclip = eloc
-        if energy_clipping > 0:
+        if energy_clipping and energy_clipping > 0:
             tv = paxis.all_mean(jnp.abs(eloc - etot).mean(-1))
             eclip = clip_around(eloc, etot, energy_clipping * tv, stop_gradient=True)
         # make the conjugated term (with stopped gradient)
@@ -119,7 +129,7 @@ def build_eval_total(eval_local_fn, energy_clipping=0.,
     return eval_total
 
 
-def build_eval_total_weighted(eval_local_fn, energy_clipping=0., 
+def build_eval_total_weighted(eval_local_fn, energy_clipping=None, 
                               grad_stablizing=False, pmap_axis_name=PMAP_AXIS_NAME):
     """Create a function that evaluates quantities on the whole batch of samples.
 
@@ -132,14 +142,15 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=0.,
             the local energy, sign and log of absolute value of wfn.
             Should return a tuple with shape ([..., 2], [..., 2], [..., 2]),
             where the last dim of size 2 corresponds to ket and bra (conj'd) results.
-        energy_clipping (float): If greater than zero, clip local energies that are
+        energy_clipping (float, optional): If greater than zero, clip local energies that are
             outside [E_t - n D, E_t + n D], where E_t is the mean local energy, n is
             this value and D the mean absolute deviation of the local energies.
-            Defaults to 0 (no clipping).
+            Defaults to None (no clipping).
         grad_stablizing (bool): If True, use a trick that substract the mean in the grad
             of log psi. This should give no contribution when there is no energy clipping
             because it is a constant times averaged E_loc - E_tot, which is zero. 
             But it will be helpful at the begining of training
+        pmap_axis_name (str): axis name used in pmap
 
     Returns:
         Callable with signature (params, data) -> (loss, aux) where data is a tuple of
@@ -183,7 +194,7 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=0.,
 
         # clipping the local energy (for making the loss)
         eclip = eloc
-        if energy_clipping > 0:
+        if energy_clipping and energy_clipping > 0:
             tv = paxis.all_average(jnp.abs(eloc - etot).mean(-1), rel_w)
             eclip = clip_around(eloc, etot, energy_clipping * tv, stop_gradient=True)
         # make the conjugated term (with stopped gradient)
