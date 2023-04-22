@@ -23,11 +23,12 @@ class FisherPrecondState(NamedTuple):
 def scale_by_fisher_inverse(
         log_prob_fn: Callable,
         damping: float = 1e-3,
+        centered: bool = True,
         maxiter: Optional[int] = None,
         mixing_factor: float = 0.,
-        pmap_axis_name: str = PMAP_AXIS_NAME,
         use_weighted: bool = False,
-        direct_inverse: bool = False
+        direct_inverse: bool = False,
+        pmap_axis_name: str = PMAP_AXIS_NAME,
 ) -> GradientTransformationExtraArgs:
     r"""build a preconditioner apply inverse fisher to the grad.
     
@@ -48,8 +49,9 @@ def scale_by_fisher_inverse(
         return scale_by_fisher_inverse_direct(
             log_prob_fn=log_prob_fn, 
             damping=damping,
-            pmap_axis_name=pmap_axis_name,
-            use_weighted=use_weighted)
+            centered=centered,
+            use_weighted=use_weighted,
+            pmap_axis_name=pmap_axis_name)
 
     paxis = PmapAxis(pmap_axis_name)
 
@@ -69,7 +71,8 @@ def scale_by_fisher_inverse(
         # flat log_p functions
         grads_flat, unravel_fn = ravel_pytree(grads)
         params_flat, _ = ravel_pytree(params)
-        raveled_logpsi = lambda p_flat: 0.5 * log_prob_fn(unravel_fn(p_flat), sample)
+        batched_logp = jax.vmap(log_prob_fn, (None, 0))
+        raveled_logpsi = lambda p_flat: 0.5 * batched_logp(unravel_fn(p_flat), sample)
 
         # logp.shape == (n_sample,)
         logpsi, vjp_fn = jax.vjp(raveled_logpsi, params_flat)
@@ -85,9 +88,10 @@ def scale_by_fisher_inverse(
         def fisher_apply(x): # (damped) fisher vector product
             # x has the same shape as grad (raveled)
             jvp = jvp_fn(x) # shape = (n_sample,) same as logp
-            mean_jvp = paxis.pmean(jnp.sum(jvp * rel_w, axis=0))
-            jvp_centered = jvp - mean_jvp
-            fvp_local, = vjp_fn(jvp_centered * rel_w)
+            if centered:
+                mean_jvp = paxis.pmean(jnp.sum(jvp * rel_w, axis=0))
+                jvp = jvp - mean_jvp
+            fvp_local, = vjp_fn(jvp * rel_w)
             fvp = paxis.pmean(fvp_local) # local sum is done by vjp
             return fvp + damping * x
         
@@ -108,8 +112,9 @@ def scale_by_fisher_inverse(
 def scale_by_fisher_inverse_direct(
         log_prob_fn: Callable,
         damping: float = 1e-3,
-        pmap_axis_name: str = PMAP_AXIS_NAME,
+        centered: bool = True,
         use_weighted: bool = False,
+        pmap_axis_name: str = PMAP_AXIS_NAME,
 ) -> GradientTransformationExtraArgs:
     r"""build a preconditioner apply inverse fisher to the grad.
     
@@ -154,9 +159,10 @@ def scale_by_fisher_inverse_direct(
                  if use_weighted and logsw is not None else jnp.ones_like(logpsi))
         rel_w /= logpsi.shape[0] # so we will use sum for local batch (n_sample) dim
         
-        mean_score = paxis.pmean(jnp.sum(rel_w[:, None] * score, axis=0))
-        score_c = score - mean_score
-        fisher = paxis.pmean(jnp.einsum('n,ni,nj->ij', rel_w, score_c, score_c))
+        if centered:
+            mean_score = paxis.pmean(jnp.sum(rel_w[:, None] * score, axis=0))
+            score = score - mean_score
+        fisher = paxis.pmean(jnp.einsum('n,ni,nj->ij', rel_w, score, score))
 
         fisher += damping * jnp.eye(fisher.shape[0])
         precond_grads_flat = jax.scipy.linalg.solve(fisher, grads_flat)
