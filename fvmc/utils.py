@@ -136,11 +136,28 @@ def fix_init(key, value, dtype=None, random=0., rnd_additive=False):
             return value * (1 + perturb)
 
 
-def parse_activation(name, **kwargs):
-    if not isinstance(name, str):
-        return name
-    raw_fn = getattr(nn, name)
-    return partial(raw_fn, **kwargs)
+def estimate_activation_gain(actv_fn):
+    key = jax.random.PRNGKey(0)
+    _trial_x = (jax.random.normal(key, (1024, 256)))
+    y = actv_fn(_trial_x)
+    gamma = y.var(axis=-1).mean() ** -0.5
+    return gamma
+
+
+_activation_gain_dict = {(actv_fn := getattr(nn, name)): 
+                            estimate_activation_gain(actv_fn)
+                         for name in ("silu", "tanh", "gelu")}
+
+def parse_activation(name, rescale=False, **kwargs):
+    if callable(name):
+        actv_fn = name
+    else:
+        actv_fn = getattr(nn, name)
+    if rescale:
+        gain = _activation_gain_dict[actv_fn] if rescale is True else rescale
+        return lambda *x: actv_fn(*x, **kwargs) * gain
+    else:
+        return partial(actv_fn, **kwargs)
 
 
 def parse_bool(keys, inputs):

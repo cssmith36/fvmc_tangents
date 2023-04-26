@@ -39,6 +39,38 @@ class FixIons(ElecWfn):
         return self.model(r=self.ions, x=x)
 
 
+class ProductModel(FullWfn):
+    r"""Pruduct of multiple model results.
+    
+    Assuming the models returns in log scale. 
+    The signature of each submodel can either be pure: x -> log(f(x)) 
+    or with sign: x -> sign(f(x)), log(|f(x)|).
+    The model will return sign if any of its submodels returns sign.
+    """
+
+    submodels: Sequence[nn.Module]
+
+    @nn.compact
+    def __call__(self, r:Array, x: Array) -> Tuple[Array, Array]:
+        sign = 1.
+        logf = 0.
+        with_sign = True # False will make the sign optional
+
+        for model in self.submodels:
+            result = model(r, x)
+            if isinstance(result, tuple):
+                sign *= result[0]
+                logf += result[1]
+                with_sign = True
+            else:
+                logf += result
+        
+        if with_sign:
+            return sign, logf
+        else:
+            return logf
+
+
 # follow the TwoBodyExpDecay class in vmcnet
 class Jastrow(nn.Module):
     r"""Isotropic exponential decay two-body Jastrow model.
@@ -140,38 +172,6 @@ class Slater(FullWfn):
             sign_up, ldet_up = jnp.linalg.slogdet(orb_up)
             sign_dn, ldet_dn = jnp.linalg.slogdet(orb_dn)
             return sign_up * sign_dn, ldet_up + ldet_dn
-
-
-class ProductModel(FullWfn):
-    r"""Pruduct of multiple model results.
-    
-    Assuming the models returns in log scale. 
-    The signature of each submodel can either be pure: x -> log(f(x)) 
-    or with sign: x -> sign(f(x)), log(|f(x)|).
-    The model will return sign if any of its submodels returns sign.
-    """
-
-    submodels: Sequence[nn.Module]
-
-    @nn.compact
-    def __call__(self, r:Array, x: Array) -> Tuple[Array, Array]:
-        sign = 1.
-        logf = 0.
-        with_sign = True # False will make the sign optional
-
-        for model in self.submodels:
-            result = model(r, x)
-            if isinstance(result, tuple):
-                sign *= result[0]
-                logf += result[1]
-                with_sign = True
-            else:
-                logf += result
-        
-        if with_sign:
-            return sign, logf
-        else:
-            return logf
 
 
 def build_jastrow_slater(ions, elems, spin=None, 
