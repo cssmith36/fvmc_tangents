@@ -235,7 +235,15 @@ def dict_to_cfg(cdict, **kwargs):
         if type(v) in tree_type:
             cfg[k] = type(v)(dict_to_cfg(vi, **kwargs) for vi in v)
     return cfg
-    
+
+
+def adaptive_residual(x, y, rescale=False):
+    if y.shape != x.shape:
+        return y
+    scale = jnp.sqrt(2.) if rescale else 1.
+    return (x + y) / scale
+
+
 
 class Serial(nn.Module):
     layers: Sequence[nn.Module]

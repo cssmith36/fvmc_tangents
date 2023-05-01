@@ -125,8 +125,8 @@ class SimpleOrbital(nn.Module):
             residual=True, activation=self.activation, param_dtype=_t_real)
         # build input features
         diff_ei = diffmat(x, r) # [..., n_el, n_ion, 3]
-        r_ei = jnp.linalg.norm(diff_ei, axis=-1, keepdims=True) # [..., n_el, n_ion, 1]
-        feature = jnp.concatenate([diff_ei, r_ei], axis=-1) # [..., n_el, n_ion, 4]
+        d_ei = jnp.linalg.norm(diff_ei, axis=-1, keepdims=True) # [..., n_el, n_ion, 1]
+        feature = jnp.concatenate([diff_ei, d_ei], axis=-1) # [..., n_el, n_ion, 4]
         feature = feature.reshape(*feature.shape[:-2], n_feature) # [..., n_el, (n_ion * 4)]
         # return the result from MLP
         return resnet(feature) # [..., n_el, n_orb]
