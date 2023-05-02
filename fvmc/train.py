@@ -11,12 +11,13 @@ from tensorboardX import SummaryWriter
 
 from . import LOGGER
 from .estimator import build_eval_local, build_eval_total
+from .neuralnet import FermiNet
 from .optimizer import build_lr_schedule, build_optimizer
 from .sampler import build_sampler, make_batched, make_multistep
 from .utils import (PAXIS, Array, ArrayTree, Printer, PyTree, adaptive_split,
                     cfg_to_yaml, load_pickle, multi_process_name,
                     save_checkpoint)
-from .wavefunction import build_jastrow_slater, log_prob_from_model
+from .wavefunction import FixIons, build_jastrow_slater, log_prob_from_model
 
 
 class SysInfo(NamedTuple):
@@ -93,7 +94,8 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         ansatz = ansatz_cfg
     else:
         ansatz_cfg = ConfigDict(ansatz_cfg)
-        ansatz = build_jastrow_slater(ions, elems, spin, **ansatz_cfg)
+        # ansatz = build_jastrow_slater(ions, elems, spin, **ansatz_cfg)
+        ansatz = FixIons(FermiNet(spin, **ansatz_cfg), ions=ions)
     log_prob_fn = log_prob_from_model(ansatz)
 
     # make estimators

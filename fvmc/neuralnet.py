@@ -1,15 +1,16 @@
 import functools
 from dataclasses import field
-from typing import Optional, Sequence, Tuple
+from typing import Any, Optional, Sequence, Tuple
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import numpy as onp
 
-
-from .utils import parse_activation, diffmat, cdist, pdist, adaptive_residual
-
+from .wavefunction import FullWfn
+from .utils import (Array, adaptive_residual, build_mlp, cdist, diffmat,
+                    fix_init, log_linear_exp, parse_activation, parse_spin,
+                    pdist)
 
 # for all functions, we use the following convention:
 # r for atom positions
@@ -17,51 +18,58 @@ from .utils import parse_activation, diffmat, cdist, pdist, adaptive_residual
 # elems for the nuclear charges (elements)
 
 
-class Embedding(nn.Module):
+def raw_features(r, x):
+    n_elec = x.shape[0]
+    n_atom = r.shape[0]
+    # Electron-atom distances
+    d_ei = diffmat(x, r)
+    d_ei_norm = jnp.linalg.norm(d_ei, keepdims=True, axis=-1)
+    d_ei = jnp.concatenate([d_ei, d_ei_norm], axis=-1)
+    h1_scaling = jnp.log(1 + d_ei_norm) / d_ei_norm
+    h1 = d_ei * h1_scaling # [n_elec, n_atom, 4]
+    # Electron-electron distances
+    d_ee = diffmat(x, x)
+    d_ee_norm = jnp.linalg.norm(
+        d_ee + jnp.eye(n_elec)[..., None],
+        keepdims=True,
+        axis=-1
+    )
+    h2_scaling = jnp.log(1 + d_ee_norm) / d_ee_norm
+    d_ee = jnp.concatenate([d_ee, 
+        d_ee_norm * (1.0 - jnp.eye(n_elec)[..., None])], axis=-1)
+    h2 = d_ee * h2_scaling # [n_elec, n_elec, 4]
+    return h1, h2, d_ei, d_ee
+
+
+class Atom_Embedding(nn.Module):
     embedding_size: int
-    activation: str
+    activation: str = 'tanh'
+    weight: Optional[Array] = None
+    bias: Optional[Array] = None
 
     @nn.compact
-    def __call__(self, r, x):
+    def __call__(self, h1: Array) -> Array:
+        n_elec, n_atom, _ = h1.shape
         n_embd = self.embedding_size
-        n_elec = x.shape[0]
-        n_atoms = r.shape[0]
         actv_fn = parse_activation(self.activation, rescale=True)
-
-        # Electron-atom distances
-        d_ei = x[:, None] - r[None]
-        d_ei_norm = jnp.linalg.norm(d_ei, keepdims=True, axis=-1)
-        d_ei = jnp.concatenate([d_ei, d_ei_norm], axis=-1)
-        h1_scaling = jnp.log(1+d_ei_norm)/d_ei_norm
-        h1 = d_ei * h1_scaling
-
-        # Electron-electron distances
-        d_ee = x[:, None] - x[None]
-        d_ee_norm = jnp.linalg.norm(
-            d_ee + jnp.eye(n_elec)[..., None],
-            keepdims=True,
-            axis=-1
-        )
-        h2_scaling = jnp.log(1+d_ee_norm)/d_ee_norm
-        d_ee = jnp.concatenate([d_ee, 
-            d_ee_norm * (1.0 - jnp.eye(n_elec)[..., None])], axis=-1)
-        h2 = d_ee * h2_scaling
-
-        # Invariant electron-nuclei embedding
-        nuc_embedding = self.param(
-            'nuc_embedding',
-            nn.initializers.normal(1/onp.sqrt(4)),
-            (n_atoms, 4, n_embd)
-        )
-        nuc_bias = self.param(
-            'nuc_bias',
-            nn.initializers.normal(1.0),
-            (n_atoms, n_embd)
-        )
-        h1 = jnp.einsum('nmi,mio->nmo', h1, nuc_embedding) + nuc_bias
+        # initialize weight and bias if not given as input
+        weight = (self.param(
+                'weight',
+                nn.initializers.normal(1/onp.sqrt(4)),
+                (n_atom, 4, n_embd))
+            if self.weight is None else self.weight)
+        bias = (self.param(
+                'bias',
+                nn.initializers.normal(1.),
+                (n_atom, n_embd))
+            if self.bias is None else self.bias)
+        # do the calculation
+        assert weight.shape == (n_atom, 4, n_embd)
+        assert bias.shape == (n_atom, n_embd)
+        h1 = jnp.einsum('nmi,mio->nmo', h1, weight) + bias
         h1 = actv_fn(h1) # TODO: check if this is better to use layer norm
-        h1 = h1.mean(1)
-        return h1, h2, d_ei, d_ee
+        h1 = h1.mean(axis=1)
+        return h1
 
 
 def aggregate_features(h1, h2, n_elec, absolute_spin):
@@ -93,13 +101,14 @@ class FermiLayer(nn.Module):
     single_size: int
     pair_size: int
     n_elec: Tuple[int, int]
-    activation: str
-    absolute_spin: bool
-    update_pair_independent: bool
+    activation: str = "gelu"
+    rescale_residual: bool = True
+    absolute_spin: bool = False
+    update_pair_independent: bool = False
 
     @nn.compact
     def __call__(self, h1, h2):
-        actv_fn = parse_activation(self.activation)
+        actv_fn = parse_activation(self.activation, rescale=self.rescale_residual)
 
         # Single update
         one_in, all_in = aggregate_features(h1, h2, self.n_elec, self.absolute_spin)
@@ -110,7 +119,7 @@ class FermiLayer(nn.Module):
         all_new = all_new.repeat(onp.array(self.n_elec), axis=0) # broadcast to both spins
         # combine both of them to get new h1
         h1_new = (one_new + all_new) #/ jnp.sqrt(2.0)
-        h1 = adaptive_residual(h1, actv_fn(h1_new))
+        h1 = adaptive_residual(h1, actv_fn(h1_new), rescale=self.rescale_residual)
         
         # Pairwise update
         if self.update_pair_independent:
@@ -128,253 +137,155 @@ class FermiLayer(nn.Module):
         if h2.shape != h2_new.shape: # fitst layer
             h2 = jnp.tanh(h2_new)
         else:
-            h2 = adaptive_residual(h2, actv_fn(h2_new))
+            h2 = adaptive_residual(h2, actv_fn(h2_new), rescale=self.rescale_residual)
         return h1, h2
 
 
 class IsotropicEnvelope(nn.Module):
-    charges: Tuple[int, ...]
-    out_dim: int
+    out_size: int
     determinants: int
-    sigma_init: float = 1
-    pi_init: float = 1
+    softplus: bool = True
+    sigma: Optional[Array] = None
+    pi: Optional[Array] = None
 
     @nn.compact
-    def __call__(self, x):  
-        # x is of shape n_elec, n_nuclei, 4
-        n_nuclei = x.shape[1]
-        def sigma_init(_, shape):
-            n_k = onp.arange(1, 9)
-            n_k = n_k.repeat(n_k**2)
-            charges = onp.array(self.charges)[:, None]
-            return jnp.array(charges / n_k[:shape[1]])[..., None].repeat(shape[2], 2)
-        sigma = self.param(
-            'sigma',
-            sigma_init if isinstance(self.sigma_init, str) else nn.initializers.constant(self.sigma_init),
-            (n_nuclei, self.out_dim, self.determinants)
-        ).reshape(n_nuclei, -1)
-        pi = self.param(
-            'pi',
-            nn.initializers.constant(self.pi_init),
-            (n_nuclei, self.out_dim * self.determinants)
-        )
-        sigma = nn.softplus(sigma)
-        pi = nn.softplus(pi)
-        return jnp.sum(jnp.exp(-x[..., -1:] * sigma) * pi, axis=1)
+    def __call__(self, d_ei): 
+        assert d_ei.ndim <= 3
+        d_ei = jnp.atleast_3d(d_ei)[:, :, -1:, None] # [n_elec, n_atom, 1, 1]
+        n_atom = d_ei.shape[1]
+        param_shape = (n_atom, self.out_size, self.determinants)
+        sigma = (self.param('sigma', nn.initializers.ones, param_shape)
+            if self.sigma is None else self.sigma)
+        pi = (self.param('pi', nn.initializers.ones, param_shape)
+            if self.pi is None else self.pi)
+        assert sigma.shape == pi.shape == param_shape
+        if self.softplus:
+            sigma = nn.softplus(sigma)
+            pi = nn.softplus(pi)
+        return jnp.sum(pi * jnp.exp(-sigma * d_ei), axis=1)
+    
 
-
-class Orbitals(nn.Module):
-    spins: Tuple[int, int]
-    charges: Tuple[int, ...]
+class OrbitalMap(nn.Module):
+    n_elec: Tuple[int, int]
     determinants: int
-    full_det: bool
+    full_det: bool = True
     share_weights: bool = False
+    envelope: Optional[Tuple[nn.Module, nn.Module]] = None
 
     @nn.compact
-    def __call__(self, h_one, r_im):
-        # h_one is n_elec, D
-        # r_im is n_elec, n_atom, 4
-        kernel_init = functools.partial(nn.initializers.variance_scaling, mode='fan_in', distribution='truncated_normal')
+    def __call__(self, h1, d_ei):
+        # h_one is [n_elec, n_desc]
+        # d_ei is [n_elec, n_atom, 1]
+        n_el = h1.shape[0]
+        n_det = self.determinants
+        assert sum(self.n_elec) == n_el
+        evlps = (None, None) if self.envelope is None else self.envelope
 
-        # Orbital functions
-        def orbital_fn(h, r, out_dim, kernel_scale=1, sigma_init=1, pi_init=1):
-            n_param = out_dim * self.determinants
-            # Different initialization to ensure zero off diagonals
-            if isinstance(kernel_scale, slice):
-                dense = nn.Dense(
-                    n_param,
-                    kernel_init=lambda key, shape, dtype=jnp.float_: jnp.concatenate([
-                        kernel_init(1.0)(key, shape=(*shape[:-1], self.determinants*self.spins[0]), dtype=dtype),
-                        jnp.zeros((*shape[:-1],self.determinants*self.spins[1]), dtype=dtype)
-                    ][kernel_scale], axis=-1)
-                )
-            else:
-                dense = nn.Dense(n_param, kernel_init=kernel_init(kernel_scale))
+        # make orbital from h1 and envelope
+        def orbital_fn(h, d, n_orb, envelope=None):
+            n_param = n_orb * n_det
+            dense = nn.Dense(n_param)
+            envelope = (IsotropicEnvelope(n_orb, self.determinants)
+                        if envelope is None else envelope)
+            assert envelope.out_size == n_orb
             # Actual orbital function
-            return (dense(h) * IsotropicEnvelope(self.charges, out_dim, self.determinants, sigma_init=sigma_init, pi_init=pi_init)(r))\
-                .reshape(-1, out_dim, self.determinants)
+            return dense(h).reshape(n_el, n_orb, n_det) * envelope(d) 
 
         # Case destinction for weight sharing 
         if self.share_weights:
-            uu, dd = jnp.split(orbital_fn(h_one, r_im, max(self.spins)), self.spins[:1], axis=0)
+            uu, dd = jnp.split(orbital_fn(h1, d_ei, max(self.n_elec), evlps[0]), 
+                               self.n_elec[:1], axis=0)
+            ud, du = jnp.split(orbital_fn(h1, d_ei, max(self.n_elec), evlps[1]), 
+                               self.n_elec[:1], axis=0)
             if self.full_det:
-                ud, du = jnp.split(orbital_fn(
-                    h_one,
-                    r_im,
-                    max(self.spins),
-                    kernel_scale=0
-                ), self.spins[:1], axis=0)
                 orbitals = (jnp.concatenate([
-                    jnp.concatenate([uu[:, :self.spins[0]], ud[:, :self.spins[1]]], axis=1),
-                    jnp.concatenate([du[:, :self.spins[0]], dd[:, :self.spins[1]]], axis=1),
+                    jnp.concatenate([uu[:, :self.n_elec[0]], ud[:, :self.n_elec[1]]], axis=1),
+                    jnp.concatenate([du[:, :self.n_elec[0]], dd[:, :self.n_elec[1]]], axis=1),
                 ], axis=0),)
             else:
-                orbitals = (uu[:, :self.spins[0]], dd[:, :self.spins[1]])
+                orbitals = (uu[:, :self.n_elec[0]], dd[:, :self.n_elec[1]])
         else:
-            h_by_spin = jnp.split(h_one, self.spins[:1], axis=0)
-            r_im_by_spin = jnp.split(r_im, self.spins[:1], axis=0)
+            h_by_spin = jnp.split(h1, self.n_elec[:1], axis=0)
+            d_by_spin = jnp.split(d_ei, self.n_elec[:1], axis=0)
             orbitals = tuple(
-                orbital_fn(h, r, d, kernel_scale=i)
-                for h, r, d, i in zip(
+                orbital_fn(h, d, no, ev)
+                for h, d, no, ev in zip(
                     h_by_spin,
-                    r_im_by_spin,
-                    (sum(self.spins),)*2 if self.full_det else self.spins,
-                    (slice(None), slice(None, None, -1)) if self.full_det else (1.0,)*2
+                    d_by_spin,
+                    (sum(self.n_elec),)*2 if self.full_det else self.n_elec,
+                    evlps)
                 )
-            )
             if self.full_det:
                 orbitals = (jnp.concatenate(orbitals, axis=0),)
         return tuple(o.transpose(2, 0, 1) for o in orbitals)
 
 
-class LogSumDet(nn.Module):
-    @nn.compact
-    def __call__(self, xs):
-        # Special case for 1x1 matrices
-        # Here we avoid going into the log domain
-        det1 = functools.reduce(
-            lambda a, b: a*b,
-            [x.reshape(-1) for x in xs if x.shape[-1] == 1],
-            jnp.ones(())
-        )
-
-        sign_in, logdet = functools.reduce(
-            lambda a, b: (a[0]*b[0], a[1]+b[1]),
-            [jnp.linalg.slogdet(x) for x in xs if x.shape[-1] > 1],
-            (jnp.ones(()), jnp.zeros(()))
-        )
-
-        maxlogdet = jax.lax.stop_gradient(jnp.max(logdet))
-        det = sign_in * det1 * jnp.exp(logdet - maxlogdet)
-
-        w = self.param(
-            'w',
-            nn.initializers.ones,
-            det.shape
-        )
-        result = jnp.vdot(w, det)
-
-        sign_out = jnp.sign(result)
-        log_out = jnp.log(jnp.abs(result)) + maxlogdet
-        return sign_out, log_out
-
-
-class Jastrow(nn.Module):
-    spins: tuple[int, int]
+class ElectronCusp(nn.Module):
+    n_elec: tuple[int, int]
     
     @nn.compact
-    def __call__(self, r_ij):
-        a_par_w, a_anti_w = self.param(
-            'weight',
-            nn.initializers.constant(1e-2),
-            (2,)
-        )
-        a_par, a_anti = self.param(
-            'alpha',
-            nn.initializers.ones,
-            (2,)
-        )
-        r_ij = r_ij[..., -1]
+    def __call__(self, d_ee: Array) -> Array:
+        w_para, w_anti = self.param('weight', fix_init, [1e-2]*2)
+        a_para, a_anti = self.param('alpha', fix_init, [1.]*2)
+        d_ee = jnp.atleast_3d(d_ee)[..., -1]
         uu, ud, du, dd = [
             s
-            for split in jnp.split(r_ij, self.spins[:1], axis=0)
-            for s in jnp.split(split, self.spins[:1], axis=1)
+            for split in jnp.split(d_ee, self.n_elec[:1], axis=0)
+            for s in jnp.split(split, self.n_elec[:1], axis=1)
         ]
         same = jnp.concatenate([uu.reshape(-1), dd.reshape(-1)])
         diff = jnp.concatenate([ud.reshape(-1), du.reshape(-1)])
-        result = -(1/4) * a_par_w * (a_par**2 / (a_par + same)).sum()
-        result += -(1/2) * a_anti_w * (a_anti**2 / (a_anti + diff)).sum()
+        result = -(1/4) * w_para * (a_para**2 / (a_para + same)).sum()
+        result += -(1/2) * w_anti * (a_anti**2 / (a_anti + diff)).sum()
         return result
 
 
-
-class FermiNet(nn.Module):
-    charges: Tuple[int, ...]
-    spins: Tuple[int, int]
-    hidden_dims: Sequence[Tuple[int, int]] = (
-        (256, 32), (256, 32), (256, 32), (256, 32))
+class FermiNet(FullWfn):
+    spin: int = None
+    hidden_dims: Sequence[Tuple[int, int]] = ((64, 16),)*4
     determinants: int = 16
-    full_det: bool = False
-    input_config: dict = field(default_factory=lambda *_: {
-        'activation': 'tanh',
-        'nuclei_embedding': 64,
-        'out_dim': 64,
-        'mlp_depth': 2
-    })
-    jastrow_config: Optional[dict] = field(default_factory=lambda *_: {
-        'activation': 'silu',
-        'n_layers': 3
-    })
-    activation: str = "silu"
+    full_det: bool = True
+    activation: str = "gelu"
+    rescale_residual: bool = True
+    jastrow_layers: int = 3
+    embedding_size: Optional[int] = 32
     absolute_spins: bool = False
     update_pair_independent: bool = False
 
-    def setup(self):
-        self.axes = self.variable(
-            'constants',
-            'axes',
-            jnp.eye,
-            3
-        )
-        self.input_construction = Embedding(
-            **self.input_config
-        )
-        # Do not compute an update for the last pairwise layer
-        hidden_dims = [list(h) for h in self.hidden_dims]
-        hidden_dims[-1][1] = 0
-        self.fermi_layers = [
-            FermiLayer(
-                n_elec=self.spins,
-                single_size=single,
-                pair_size=pair,
-                activation=self.activation,
-                absolute_spin=self.absolute_spins,
-                update_pair_independent=self.update_pair_independent
-            )
-            for single, pair in hidden_dims
-        ]
+    @nn.compact
+    def __call__(self, r: Array, x: Array) -> Array:
+        n_elec = x.shape[-2]
+        n_atom = r.shape[-2]
+        n_elec_spin = parse_spin(n_elec, self.spin)
+        raw_h1, h2, d_ei, d_ee = raw_features(r, x)
 
-        self.to_orbitals = Orbitals(self.spins, self.charges, self.determinants, self.full_det, not self.absolute_spins)
+        embd_size = self.embedding_size or self.hidden_dims[0][0]
+        atom_embedding = Atom_Embedding(embd_size)
+        h1 = atom_embedding(raw_h1)
 
-        self.logsumdet = LogSumDet()
-        if self.jastrow_config is not None:
-            self.jastrow = AutoMLP(1, **self.jastrow_config)
-            self.jastrow_weight = self.param(
-                'jastrow_weight',
-                nn.initializers.zeros,
-                ()
-            )
-        self.cusp_jastorw = Jastrow(self.spins)
+        for sdim, pdim in self.hidden_dims:
+            flayer = FermiLayer(sdim, pdim, n_elec_spin, 
+                self.activation, self.rescale_residual, 
+                self.absolute_spins, self.update_pair_independent)
+            h1, h2 = flayer(h1, h2)
+        
+        orbital_map = OrbitalMap(n_elec_spin, 
+            self.determinants, self.full_det, not self.absolute_spins)
+        orbitals = orbital_map(h1, d_ei) # tuple of [n_det, n_orb, n_orb]
 
-    def encode(self, electrons, atoms):
-        # Prepare input
-        atoms = atoms.reshape(-1, 3) @ self.axes.value
-        electrons = electrons.reshape(-1, 3) @ self.axes.value
-        h_one, h_two, r_im, r_ij = self.input_construction(electrons, atoms)
+        signs, logdets = jax.tree_map(lambda *arrs: jnp.stack(arrs, axis=0),
+            *jax.tree_map(jnp.linalg.slogdet, orbitals)) # [1 or 2, n_det]
+        signs, logdets = signs.prod(0), logdets.sum(0)
+        det_weights = self.param(
+            "det_weights", nn.initializers.ones, (self.determinants, 1))
+        sign, logpsi = log_linear_exp(signs, logdets, det_weights, axis=0)
+        sign, logpsi = sign[0], logpsi[0]
 
-        # Fermi interaction
-        for fermi_layer in self.fermi_layers:
-            h_one, h_two = fermi_layer(h_one, h_two)
+        jastrow = build_mlp([h1.shape[-1]] * self.jastrow_layers + [1],
+            residual=True, activation=self.activation, rescale=self.rescale_residual)
+        jastrow_weight = self.param(
+            "jastrow_weights", nn.initializers.zeros, ())
+        cusp = ElectronCusp(n_elec_spin)
+        logpsi += jastrow_weight * jastrow(h1).mean() + cusp(d_ee[...,-1])
 
-        return h_one, r_im, r_ij
-
-    def orbitals(self, electrons, atoms):
-        h_one, r_im, _ = self.encode(electrons, atoms)
-        return self.to_orbitals(h_one, r_im)
-
-    def signed(self, electrons, atoms):
-        # Compute orbitals
-        h_one, r_im, r_ij = self.encode(electrons, atoms)
-        orbitals = self.to_orbitals(h_one, r_im)
-        # Compute log det
-        sign, log_psi = self.logsumdet(orbitals)
-
-        # Optional jastrow factor
-        if self.jastrow_config is not None:
-            log_psi += self.jastrow(h_one).mean() * self.jastrow_weight
-        log_psi += self.cusp_jastorw(r_ij)
-
-        return sign, log_psi
-
-    def __call__(self, electrons, atoms):
-        return self.signed(electrons, atoms)[1]
+        return sign, logpsi

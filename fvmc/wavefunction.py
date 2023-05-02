@@ -3,10 +3,11 @@ from dataclasses import field as _field
 from typing import Optional, Sequence, Tuple, Union
 
 import jax
-from jax import numpy as jnp
 from flax import linen as nn
+from jax import numpy as jnp
 
-from .utils import Array, _t_real, build_mlp, cdist, diffmat, fix_init, pdist
+from .utils import (Array, _t_real, build_mlp, cdist, diffmat, fix_init,
+                    parse_spin, pdist)
 
 
 def log_prob_from_model(model: nn.Module):
@@ -14,12 +15,14 @@ def log_prob_from_model(model: nn.Module):
 
 
 class FullWfn(nn.Module, abc.ABC):
+    @abc.abstractmethod
     def __call__(self, r: Array, x: Array) -> Tuple[Array, Array]:
         """Take ion position r and electron position x, return sign and log|psi|"""
         raise NotImplementedError
     
 
 class ElecWfn(nn.Module, abc.ABC):
+    @abc.abstractmethod
     def __call__(self, x: Array) -> Tuple[Array, Array]:
         """Take only the electron position x, return sign and log|psi|"""
         raise NotImplementedError
@@ -72,7 +75,7 @@ class ProductModel(FullWfn):
 
 
 # follow the TwoBodyExpDecay class in vmcnet
-class Jastrow(nn.Module):
+class SimpleJastrow(nn.Module):
     r"""Isotropic exponential decay two-body Jastrow model.
     
     The decay is isotropic in the sense that each electron-nuclei and electron-electron
@@ -132,7 +135,7 @@ class SimpleOrbital(nn.Module):
         return resnet(feature) # [..., n_el, n_orb]
 
 
-class Slater(FullWfn):
+class SimpleSlater(FullWfn):
     r"""Slater determinant from single particle orbitals
     
     Separate the electrons into different spins and calculate orbitals for both.
@@ -148,12 +151,7 @@ class Slater(FullWfn):
     @nn.compact
     def __call__(self, r: Array, x: Array) -> Tuple[Array, Array]:
         n_el = x.shape[-2]
-        if self.spin is None:
-            n_up, n_dn = n_el//2, n_el - n_el//2
-        else:
-            n_up = (n_el + self.spin) // 2
-            n_dn = n_up - self.spin
-        assert n_up + n_dn == n_el
+        n_up, n_dn = parse_spin(n_el, self.spin)
         
         if self.orbital_type == "simple":
             OrbCls = SimpleOrbital
@@ -177,8 +175,8 @@ class Slater(FullWfn):
 def build_jastrow_slater(ions, elems, spin=None, 
         full_det=True, orbital_type="simple", orbital_args=None):
     orbital_args = orbital_args or {}
-    jastrow = Jastrow(elems)
-    slater = Slater(spin, full_det, orbital_type, orbital_args)
+    jastrow = SimpleJastrow(elems)
+    slater = SimpleSlater(spin, full_det, orbital_type, orbital_args)
     model = ProductModel([jastrow, slater])
     elec_model = FixIons(model, ions)
     return elec_model

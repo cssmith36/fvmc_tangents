@@ -6,7 +6,7 @@ import numpy as np
 from jax import numpy as jnp
 
 from fvmc.utils import pdist
-from fvmc.wavefunction import Jastrow, SimpleOrbital, Slater, build_jastrow_slater
+from fvmc.wavefunction import SimpleJastrow, SimpleOrbital, SimpleSlater, build_jastrow_slater
 
 
 def make_collapse_conf():
@@ -45,7 +45,7 @@ _key0 = jax.random.PRNGKey(0)
 
 def test_jastrow():
     ions, elems, x = make_collapse_conf()
-    jastrow = Jastrow(elems)
+    jastrow = SimpleJastrow(elems)
     params = jastrow.init(_key0, ions, x)
     
     actual_out = jastrow.apply(params, ions, x)
@@ -72,7 +72,7 @@ def test_orbital_shape():
 def test_slater_antisymm(full_det, spin):
     ions, elems, x = make_collapse_conf()
     n_batch, n_el = x.shape[:-1]
-    slater = Slater(full_det=full_det, orbital_args={"n_hidden": 1})
+    slater = SimpleSlater(full_det=full_det, orbital_args={"n_hidden": 1})
     params = slater.init(_key0, ions, x)
 
     x = x + jax.random.normal(_key0, x.shape)
