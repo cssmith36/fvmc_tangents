@@ -71,9 +71,15 @@ def _dense(x: chex.Array, params: Sequence[chex.Array]) -> chex.Array:
     return y if not opt_b else y + opt_b[0]
 
 
+def _dense_with_reshape(x: chex.Array, params: Sequence[chex.Array]) -> chex.Array:
+    w, b = params
+    y = jnp.matmul(x, w)
+    return y + b.reshape((1,) * (y.ndim - 1) + (-1,))
+
+
 def _dense_parameter_extractor(
         eqns: Sequence[jax.core.JaxprEqn],
-    ) -> Mapping[str, Any]:
+) -> Mapping[str, Any]:
     """Extracts all parameters from the conv_general_dilated operator."""
     for eqn in eqns:
         if eqn.primitive.name == "dot_general":
@@ -81,50 +87,36 @@ def _dense_parameter_extractor(
     assert False
 
 
-# repeating a dense layer once
-_repeated_dense1 = jax.vmap(_dense, in_axes=[0, [None, None]])
-_repeated_dense2 = jax.vmap(_repeated_dense1, in_axes=[0, [None, None]])
-_repeated_dense1_no_b = jax.vmap(_dense, in_axes=[0, [None]])
-_repeated_dense2_no_b = jax.vmap(_repeated_dense1_no_b, in_axes=[0, [None]])
+def _make_repeat_dense_pattern(
+        batch_dims: int,
+        with_bias: bool,
+        reshape: bool,
+        in_dim: int = 13,
+        out_dim: int = 7,
+        extra_dims: Sequence[int] = tuple(range(8, 13))
+) -> kfac_jax.tag_graph_matcher.GraphPattern:
+    example_fn = _dense_with_reshape if with_bias and reshape else _dense
+    for i in range(batch_dims):
+        example_fn = jax.vmap(example_fn, 
+            in_axes=[0, ([None, None] if with_bias else [None])])
+    x_shape = [*extra_dims[:batch_dims+1], in_dim]
+    p_shapes = ([[in_dim, out_dim], [out_dim]] if with_bias else
+                [[in_dim, out_dim]])
+    return kfac_jax.tag_graph_matcher.GraphPattern(
+        name=f"repeated_dense{batch_dims}_"
+             f"{'with' if with_bias else 'no'}_bias"
+             f"{'_reshape' if reshape else ''}",
+        tag_primitive=repeated_dense_tag,
+        compute_func=example_fn,
+        parameters_extractor_func=_dense_parameter_extractor,
+        example_args=[np.zeros(x_shape), [np.zeros(s) for s in p_shapes]],
+    )
+    
 
-# Computation for repeated dense layer
-repeated_dense1_with_bias_pattern = kfac_jax.tag_graph_matcher.GraphPattern(
-    name="repeated_dense1_with_bias",
-    tag_primitive=repeated_dense_tag,
-    compute_func=_repeated_dense1,
-    parameters_extractor_func=_dense_parameter_extractor,
-    example_args=[np.zeros([9, 11, 13]), [np.zeros([13, 7]), np.zeros([7])]],
-)
-
-repeated_dense1_no_bias_pattern = kfac_jax.tag_graph_matcher.GraphPattern(
-    name="repeated_dense1_no_bias",
-    tag_primitive=repeated_dense_tag,
-    compute_func=_repeated_dense1_no_b,
-    parameters_extractor_func=_dense_parameter_extractor,
-    example_args=[np.zeros([9, 11, 13]), [np.zeros([13, 7])]],
-)
-
-repeated_dense2_with_bias_pattern = kfac_jax.tag_graph_matcher.GraphPattern(
-    name="repeated_dense2_with_bias",
-    tag_primitive=repeated_dense_tag,
-    compute_func=_repeated_dense2,
-    parameters_extractor_func=_dense_parameter_extractor,
-    example_args=[np.zeros([8, 9, 11, 13]), [np.zeros([13, 7]), np.zeros([7])]],
-)
-
-repeated_dense2_no_bias_pattern = kfac_jax.tag_graph_matcher.GraphPattern(
-    name="repeated_dense2_no_bias",
-    tag_primitive=repeated_dense_tag,
-    compute_func=_repeated_dense2_no_b,
-    parameters_extractor_func=_dense_parameter_extractor,
-    example_args=[np.zeros([8, 9, 11, 13]), [np.zeros([13, 7])]],
-)
-
-GRAPH_PATTERNS = (
-    repeated_dense1_with_bias_pattern,
-    repeated_dense2_with_bias_pattern,
-    repeated_dense1_no_bias_pattern,
-    repeated_dense2_no_bias_pattern,
+GRAPH_PATTERNS = tuple(
+    _make_repeat_dense_pattern(n, b, s)
+    for n in range(1, 4)
+    for b, s in ((True, True), (True, False), (False, False))
 ) + kfac_jax.tag_graph_matcher.DEFAULT_GRAPH_PATTERNS
 
 
