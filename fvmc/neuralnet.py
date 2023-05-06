@@ -7,10 +7,10 @@ import jax
 import jax.numpy as jnp
 import numpy as onp
 
+from .utils import (Array, _t_real, adaptive_residual, build_mlp, cdist,
+                    diffmat, fix_init, log_linear_exp, parse_activation,
+                    parse_spin, pdist)
 from .wavefunction import FullWfn
-from .utils import (Array, adaptive_residual, build_mlp, cdist, diffmat,
-                    fix_init, log_linear_exp, parse_activation, parse_spin,
-                    pdist)
 
 # for all functions, we use the following convention:
 # r for atom positions
@@ -97,6 +97,24 @@ def aggregate_features(h1, h2, n_elec, absolute_spin):
     return one_in, all_in
 
 
+def warp_dense(dense_fn):
+    
+    def warpped_fn(arrays: Sequence[Array]):
+        sizes, shapes = zip(*[(jnp.size(x[...,0]), jnp.shape(x[...,0])) 
+                              for x in arrays])
+        indices = tuple(onp.cumsum(sizes))
+        ravel_fn = lambda lst: jnp.concatenate([jnp.ravel(e) for e in lst])
+        unravel_fn = lambda arr: [chunk.reshape(shape) 
+            for chunk, shape in zip(jnp.split(arr, indices[:-1]), shapes)]
+        # ravel all but last dim where the dense acted on
+        raveled = jax.vmap(ravel_fn, in_axes=-1, out_axes=-1)(arrays)
+        applied = dense_fn(raveled)
+        unraveled = jax.vmap(unravel_fn, in_axes=-1, out_axes=-1)(applied)
+        return unraveled
+
+    return warpped_fn
+
+
 class FermiLayer(nn.Module):
     single_size: int
     pair_size: int
@@ -113,9 +131,9 @@ class FermiLayer(nn.Module):
         # Single update
         one_in, all_in = aggregate_features(h1, h2, self.n_elec, self.absolute_spin)
         # per electron contribution
-        one_new = nn.Dense(self.single_size)(one_in)
-        # global contribution
-        all_new = nn.Dense(self.single_size, use_bias=False)(all_in) # [2, n_single]
+        one_new = nn.Dense(self.single_size, param_dtype=_t_real)(one_in)
+        # global contribution (all_new.shape == (2, n_single))
+        all_new = nn.Dense(self.single_size, use_bias=False, param_dtype=_t_real)(all_in) 
         all_new = all_new.repeat(onp.array(self.n_elec), axis=0) # broadcast to both spins
         # combine both of them to get new h1
         h1_new = (one_new + all_new) #/ jnp.sqrt(2.0)
@@ -123,16 +141,18 @@ class FermiLayer(nn.Module):
         
         # Pairwise update
         if self.update_pair_independent:
-            h2_new = nn.Dense(self.pair_size)(h2)
+            h2_new = nn.Dense(self.pair_size, param_dtype=_t_real)(h2)
         else:
             u, d = jnp.split(h2, self.n_elec[:1], axis=0)
             uu, ud = jnp.split(u, self.n_elec[:1], axis=1)
             du, dd = jnp.split(d, self.n_elec[:1], axis=1)
-            same = nn.Dense(self.pair_size)
-            diff = nn.Dense(self.pair_size)
+            same = nn.Dense(self.pair_size, param_dtype=_t_real)
+            diff = nn.Dense(self.pair_size, param_dtype=_t_real)
+            new_uu, new_dd = warp_dense(same)([uu, dd])
+            new_ud, new_du = warp_dense(diff)([ud, du])
             h2_new = jnp.concatenate([
-                jnp.concatenate([same(uu), diff(ud)], axis=1),
-                jnp.concatenate([diff(du), same(dd)], axis=1),
+                jnp.concatenate([new_uu, new_ud], axis=1),
+                jnp.concatenate([new_du, new_dd], axis=1),
             ], axis=0)
         if h2.shape != h2_new.shape: # fitst layer
             h2 = jnp.tanh(h2_new)
@@ -184,7 +204,7 @@ class OrbitalMap(nn.Module):
         # make orbital from h1 and envelope
         def orbital_fn(h, d, n_orb, envelope=None):
             n_param = n_orb * n_det
-            dense = nn.Dense(n_param)
+            dense = nn.Dense(n_param, param_dtype=_t_real)
             envelope = (IsotropicEnvelope(n_orb, self.determinants)
                         if envelope is None else envelope)
             assert envelope.out_size == n_orb
@@ -282,7 +302,8 @@ class FermiNet(FullWfn):
         sign, logpsi = sign[0], logpsi[0]
 
         jastrow = build_mlp([h1.shape[-1]] * self.jastrow_layers + [1],
-            residual=True, activation=self.activation, rescale=self.rescale_residual)
+            residual=True, activation=self.activation, 
+            rescale=self.rescale_residual, param_dtype=_t_real)
         jastrow_weight = self.param(
             "jastrow_weights", nn.initializers.zeros, ())
         cusp = ElectronCusp(n_elec_spin)
