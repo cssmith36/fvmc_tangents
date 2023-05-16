@@ -5,7 +5,7 @@ import numpy as np
 from jax import numpy as jnp
 from functools import partial
 
-from fvmc.hamiltonian import calc_potential_energy, calc_kinetic_energy, calc_local_energy
+from fvmc.hamiltonian import calc_pe, calc_ke_elec, calc_ke_full, calc_local_energy
 
 
 def make_test_log_f():
@@ -57,7 +57,7 @@ def test_potential_energy():
     target_ion_ion = (2.0 / 4.0) + (3.0 / jnp.sqrt(37.0)) + (6.0 / jnp.sqrt(5.0))
 
     target_pe = target_el_ion + target_el_el + target_ion_ion
-    actual_pe = calc_potential_energy(ions, elems, x)
+    actual_pe = calc_pe(elems, ions, x)
 
     np.testing.assert_allclose(actual_pe, target_pe)
 
@@ -72,7 +72,23 @@ def test_kinetic_energy(x):
     # d^2f/dx_i^2 = 2 for all i, so the Laplacian is simply 2 * n, where n is
     # the number of coordiantes. We then divide by f(x) to get (nabla^2 f) / f
     target_ke = -0.5 * (x.shape[-1] * x.shape[-2]) * 2 / f(None, x)
-    actual_ke = calc_kinetic_energy(log_psi, x)
+    actual_ke = calc_ke_elec(log_psi, x)
+
+    np.testing.assert_allclose(actual_ke, target_ke, rtol=1e-6)
+
+
+@pytest.mark.parametrize("x", [make_test_x(), make_batched_x()])
+def test_kinetic_energy_full(x):
+    # single x
+    """Test (nabla^2 f)(x) / f(x) for f(x) = sum_i x_i^2 + 3x_i."""
+    f, log_f = make_test_log_f()
+    log_psi = lambda r, x: log_f(None, r+x)
+    mass = jnp.ones(x.shape[-2]) * 2
+
+    # d^2f/dx_i^2 = 2 for all i, so the Laplacian is simply 2 * n, where n is
+    # the number of coordiantes. We then divide by f(x) to get (nabla^2 f) / f
+    target_ke = -0.5 * (1 + 1/2) * (x.shape[-1] * x.shape[-2]) * 2 / f(None, 2*x)
+    actual_ke = calc_ke_full(log_psi, mass, x, x)
 
     np.testing.assert_allclose(actual_ke, target_ke, rtol=1e-6)
 
@@ -83,6 +99,6 @@ def test_local_energy_shape(x):
     log_psi = partial(log_f, None)
     ions, elems = make_test_ions()
 
-    le = calc_local_energy(log_psi, ions, elems, x)
+    le = calc_local_energy(log_psi, elems, ions, x)
     assert le.shape == f(None, x).shape
     

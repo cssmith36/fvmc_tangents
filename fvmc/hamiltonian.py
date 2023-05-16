@@ -1,6 +1,7 @@
 import jax
 from jax import lax
 from jax import numpy as jnp
+from jax.flatten_util import ravel_pytree
 
 from .utils import pdist, cdist
 
@@ -22,15 +23,16 @@ def calc_coulomb_2(pos_a, charge_a, pos_b, charge_b):
     return coulomb.sum((-1,-2))
 
 
-def calc_potential_energy(ions, elems, x):
+def calc_pe(elems, r, x):
+    # r is ion position
     # x is electron positions
     el_el = calc_coulomb(x, -1)
-    el_ion = calc_coulomb_2(x, -1, ions, elems)
-    ion_ion = calc_coulomb(ions, elems)
+    el_ion = calc_coulomb_2(x, -1, r, elems)
+    ion_ion = calc_coulomb(r, elems)
     return el_el + el_ion + ion_ion
 
 
-def calc_kinetic_energy(log_psi, x):
+def calc_ke_elec(log_psi, x):
     # adapted from FermiNet and vmcnet
     # calc -0.5 * (\nable^2 \psi) / \psi
     # handle batch of x automatically
@@ -61,8 +63,43 @@ def calc_kinetic_energy(log_psi, x):
     return -0.5 * lapl_fn(x)
 
 
-def calc_local_energy(log_psi, ions, elems, x):
-    ke = calc_kinetic_energy(log_psi, x) 
-    pe = calc_potential_energy(ions, elems, x)
+def calc_ke_full(log_psi, mass, r, x):
+    # adapted from FermiNet and vmcnet
+    # calc -0.5 * (\nable^2 \psi) / \psi
+    # handle batch of r, x automatically
+    mass = mass.reshape(-1)
+
+    def _lapl_over_psi(r, x):
+        # (\nable^2 f) / f = \nabla^2 log|f| + (\nabla log|f|)^2
+        # r and x is assumed to have shape [n_ion/elec, 3], not batched
+        flat_in, unravel = ravel_pytree((r, x))
+        ncoord = flat_in.size
+        assert mass.size == r.shape[0]
+        
+        f = lambda flat_in: log_psi(*unravel(flat_in)) # take flattened x
+        grad_f = jax.grad(f)
+        grad_value, dgrad_f = jax.linearize(grad_f, flat_in)
+
+        minv = jnp.concatenate([jnp.repeat(1/mass, r.shape[1]), 
+                                jnp.ones(x.size)])
+        minv_mat = jnp.diag(minv)
+        loop_fn = lambda i, val: val + dgrad_f(minv_mat[i])[i]
+        laplacian = ((minv * grad_value**2).sum() 
+                     + lax.fori_loop(0, ncoord, loop_fn, 0.0))
+        return laplacian
+    
+    if r.ndim == x.ndim == 2:
+        lapl_fn = _lapl_over_psi
+    elif r.ndim == x.ndim == 3:
+        lapl_fn = jax.vmap(_lapl_over_psi)
+    else:
+        raise ValueError(f"unsupported r.ndim: {r.ndim} and x.ndim: {x.ndim}")
+    
+    return -0.5 * lapl_fn(r, x)
+
+
+def calc_local_energy(log_psi, elems, r, x, ion_ke=False):
+    ke = calc_ke_elec(log_psi, x) 
+    pe = calc_pe(elems, r, x)
     return ke + pe
     
