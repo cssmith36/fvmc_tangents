@@ -41,7 +41,7 @@ def make_test_ions():
 
 def test_potential_energy():
     x = make_batched_x()
-    ions, elems = make_test_ions()
+    nuclei, elems = make_test_ions()
 
     target_el_ion = -jnp.sum(jnp.array([
             [
@@ -57,7 +57,7 @@ def test_potential_energy():
     target_ion_ion = (2.0 / 4.0) + (3.0 / jnp.sqrt(37.0)) + (6.0 / jnp.sqrt(5.0))
 
     target_pe = target_el_ion + target_el_el + target_ion_ion
-    actual_pe = calc_pe(elems, ions, x)
+    actual_pe = calc_pe(elems, nuclei, x)
 
     np.testing.assert_allclose(actual_pe, target_pe)
 
@@ -97,8 +97,8 @@ def test_kinetic_energy_full(x):
 def test_local_energy_shape(x):
     f, log_f = make_test_log_f()
     log_psi = partial(log_f, None)
-    ions, elems = make_test_ions()
+    nuclei, elems = make_test_ions()
 
-    le = calc_local_energy(log_psi, elems, ions, x)
+    le = calc_local_energy(log_psi, elems, nuclei, x)
     assert le.shape == f(None, x).shape
     

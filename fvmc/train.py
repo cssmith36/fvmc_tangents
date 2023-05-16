@@ -17,11 +17,11 @@ from .sampler import build_sampler, make_batched, make_multistep
 from .utils import (PAXIS, Array, ArrayTree, Printer, PyTree, adaptive_split,
                     cfg_to_yaml, load_pickle, multi_process_name,
                     save_checkpoint)
-from .wavefunction import FixIons, build_jastrow_slater, log_prob_from_model
+from .wavefunction import FixNuclei, build_jastrow_slater, log_prob_from_model
 
 
 class SysInfo(NamedTuple):
-    ions: Array
+    nuclei: Array
     elems: Array
     n_elec: Tuple[int, int]
 
@@ -79,7 +79,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         map(ConfigDict, (system_cfg, sample_cfg, optimize_cfg, restart_cfg))
 
     # parse system, may be changed (e.g. using pyscf mol)
-    ions = jnp.asarray(system_cfg.ions)
+    nuclei = jnp.asarray(system_cfg.nuclei)
     elems = jnp.asarray(system_cfg.elems)
     tot_elec = int(sum(elems) + system_cfg.charge)
     spin = system_cfg.spin if system_cfg.spin is not None else tot_elec % 2
@@ -87,19 +87,19 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         f"system with {tot_elec} electrons cannot have spin {spin}"
     n_elec = (tot_elec + spin) // 2, (tot_elec - spin) // 2
     elec_shape = onp.array([tot_elec, 3])
-    system = SysInfo(ions, elems, n_elec)
+    system = SysInfo(nuclei, elems, n_elec)
 
     # make wavefunction
     if isinstance(ansatz_cfg, nn.Module):
         ansatz = ansatz_cfg
     else:
         ansatz_cfg = ConfigDict(ansatz_cfg)
-        # ansatz = build_jastrow_slater(ions, elems, spin, **ansatz_cfg)
-        ansatz = FixIons(FermiNet(spin, **ansatz_cfg), ions=ions)
+        # ansatz = build_jastrow_slater(nuclei, elems, spin, **ansatz_cfg)
+        ansatz = FixNuclei(FermiNet(spin, **ansatz_cfg), nuclei=nuclei)
     log_prob_fn = log_prob_from_model(ansatz)
 
     # make estimators
-    local_fn = build_eval_local_elec(ansatz, ions, elems)
+    local_fn = build_eval_local_elec(ansatz, nuclei, elems)
     loss_fn = build_eval_total(local_fn, 
         pmap_axis_name=PAXIS.name, **optimize_cfg.loss)
     loss_and_grad = jax.value_and_grad(loss_fn, has_aux=True)

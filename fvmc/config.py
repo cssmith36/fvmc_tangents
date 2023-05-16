@@ -16,7 +16,7 @@ def default() -> ConfigDict:
         },
 
         "system": {
-            "ions": [[0., 0., 0.], [0., 0., 1.]],
+            "nuclei": [[0., 0., 0.], [0., 0., 1.]],
             "elems": [1., 1.],
             "charge": 0,
             "spin": None,

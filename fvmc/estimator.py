@@ -17,14 +17,14 @@ def clip_around(a, target, half_range, stop_gradient=True):
     return jnp.clip(a, c_min, c_max)
 
 
-def build_eval_local_elec(model, ions, elems):
+def build_eval_local_elec(model, nuclei, elems):
     """create a function that evaluates local energy, sign and log abs of wavefunction.
     
     Args:
         model (nn.Module): a flax module that calculates the sign and log abs of wavefunction.
             `model.apply` should have signature (params, x) -> (sign(f(x)), log|f(x)|)
-        ions (Array): the position of ions.
-        elems (Array): the element indices (charges) of those ions.
+        nuclei (Array): the position of nuclei.
+        elems (Array): the element indices (charges) of those nuclei.
 
     Returns:
         Callable with signature (params, x) -> (eloc, sign, logf) that evaluates 
@@ -33,7 +33,7 @@ def build_eval_local_elec(model, ions, elems):
 
     def eval_local(params, x):
         log_psi_abs = ith_output(partial(model.apply, params), 1)
-        eloc = calc_local_energy(log_psi_abs, elems, ions, x)
+        eloc = calc_local_energy(log_psi_abs, elems, nuclei, x)
         sign, logf = model.apply(params, x)
         return eloc, sign, logf
 
@@ -46,12 +46,12 @@ def build_eval_local_full(model, elems):
     Args:
         model (nn.Module): a flax module that calculates the sign and log abs of wavefunction.
             `model.apply` should have signature (params, r, x) -> (sign(f), log|f|)
-        elems (Array): the element indices (charges) of ions (corresponding to `r`).
+        elems (Array): the element indices (charges) of nuclei (corresponding to `r`).
 
     Returns:
         Callable with signature (params, conf) -> (eloc, sign, logf) that evaluates 
         local energy, sign and log abs of wavefunctions on given parameters and conf.
-        `conf` here is a tuple of (r, x) contains ion (r) and electron (x) positions.
+        `conf` here is a tuple of (r, x) contains nuclei (r) and electron (x) positions.
     """
 
     def eval_local(params, conf):

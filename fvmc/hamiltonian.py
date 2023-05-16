@@ -24,7 +24,7 @@ def calc_coulomb_2(pos_a, charge_a, pos_b, charge_b):
 
 
 def calc_pe(elems, r, x):
-    # r is ion position
+    # r is nuclei position
     # x is electron positions
     el_el = calc_coulomb(x, -1)
     el_ion = calc_coulomb_2(x, -1, r, elems)

@@ -14,7 +14,7 @@ def test_h2_kfac(tmp_path, capfd):
     cfg.verbosity = "INFO"
     #cfg.restart.params = 'oldstates.pkl'
 
-    cfg.system.ions = [[0.,0.,0.], [0.,0.,1.]]
+    cfg.system.nuclei = [[0.,0.,0.], [0.,0.,1.]]
     cfg.system.elems = [1., 1.]
 
     #TODO make parameters for ansatz

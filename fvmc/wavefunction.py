@@ -23,7 +23,7 @@ def log_prob_from_model(model: nn.Module):
 class FullWfn(nn.Module, abc.ABC):
     @abc.abstractmethod
     def __call__(self, r: Array, x: Array) -> Tuple[Array, Array]:
-        """Take ion position r and electron position x, return sign and log|psi|"""
+        """Take nuclei position r and electron position x, return sign and log|psi|"""
         raise NotImplementedError
     
 
@@ -34,18 +34,18 @@ class ElecWfn(nn.Module, abc.ABC):
         raise NotImplementedError
 
 
-class FixIons(ElecWfn):
-    r"""Module warpper that fix the ion positions for a full model
+class FixNuclei(ElecWfn):
+    r"""Module warpper that fix the nuclei positions for a full model
     
-    This class takes a full wavefunction model f(r,x) of r (ions) and x (electrons)
-    and the fixed ion positions r_0, and return a new model which only depends on x.
+    This class takes a full wavefunction model f(r,x) of r (nuclei) and x (electrons)
+    and the fixed nuclei positions r_0, and return a new model which only depends on x.
     Think it as a partial warpper that works on nn.Module
     """
     model: FullWfn
-    ions: Array
+    nuclei: Array
 
     def __call__(self, x: Array) -> Tuple[Array, Array]:
-        return self.model(r=self.ions, x=x)
+        return self.model(r=self.nuclei, x=x)
 
 
 class ProductModel(FullWfn):
@@ -90,14 +90,14 @@ class SimpleJastrow(nn.Module):
         \sum_i(-\sum_j Z_j ||elec_i - ion_j|| + \sum_k Q ||elec_i - elec_k||)
 
     (no exponential because it we are working with log of wavefunctions.)
-    Z_j and Q are parameters that are initialized to be ion charges and 1.
+    Z_j and Q are parameters that are initialized to be nuclei charges and 1.
     """
 
     elems: Array
 
     @nn.compact
     def __call__(self, r: Array, x: Array) -> Array:
-        # calculate initial scale, so that it returns 0 if all electrons are on ions
+        # calculate initial scale, so that it returns 0 if all electrons are on nuclei
         cmat = jnp.expand_dims(self.elems, -1) * jnp.expand_dims(self.elems, -2)
         scale = 0.5 * jnp.sum(pdist(r) * cmat)
         # make z and q parameters
@@ -178,12 +178,12 @@ class SimpleSlater(FullWfn):
             return sign_up * sign_dn, ldet_up + ldet_dn
 
 
-def build_jastrow_slater(ions, elems, spin=None, 
+def build_jastrow_slater(nuclei, elems, spin=None, 
         full_det=True, orbital_type="simple", orbital_args=None):
     orbital_args = orbital_args or {}
     jastrow = SimpleJastrow(elems)
     slater = SimpleSlater(spin, full_det, orbital_type, orbital_args)
     model = ProductModel([jastrow, slater])
-    elec_model = FixIons(model, ions)
+    elec_model = FixNuclei(model, nuclei)
     return elec_model
     
