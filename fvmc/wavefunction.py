@@ -6,6 +6,8 @@ import jax
 from flax import linen as nn
 from jax import numpy as jnp
 
+from fvmc.utils import Array
+
 from .utils import (Array, _t_real, build_mlp, cdist, diffmat, fix_init,
                     parse_spin, pdist)
 
@@ -176,6 +178,45 @@ class SimpleSlater(FullWfn):
             sign_up, ldet_up = jnp.linalg.slogdet(orb_up)
             sign_dn, ldet_dn = jnp.linalg.slogdet(orb_dn)
             return sign_up * sign_dn, ldet_up + ldet_dn
+        
+
+class NucleiGaussian(FullWfn):
+    r"""Gaussian for nuclei wavefunctions, centered on trainable sites
+    
+    The log wavefunction is given by - \sum_i (r_i - r0_i)^2 / (2 * sigma_i^2)
+    """
+
+    init_r0: Array
+    init_sigma: Array
+
+    @nn.compact
+    def __call__(self, r: Array, x: Array) -> Tuple[Array, Array]:
+        del x
+        r0 = self.param("r0", fix_init, self.init_r0, _t_real)
+        sigma = self.param("sigma", fix_init, 
+                           jnp.reshape(self.init_sigma, (-1, 1)), _t_real)
+        return 1., -0.5 * jnp.sum(((r - r0) / sigma)**2)
+    
+
+class NucleiGaussianSlater(FullWfn):
+    r"""Gaussian for nuclei wavefunctions with Slater determinant exchange
+    
+    The wavefunction is given by Det_ij{ exp[-(r_i - r0_j)^2 / (2 * sigma_j^2)] }
+    """
+
+    init_r0: Array
+    init_sigma: Array
+
+    @nn.compact
+    def __call__(self, r: Array, x: Array) -> Tuple[Array, Array]:
+        del x
+        # r0: [n_nucl, 3], sigma: [n_nucl, 1]
+        r0 = self.param("r0", fix_init, self.init_r0, _t_real)
+        sigma = self.param("sigma", fix_init, 
+                           jnp.reshape(self.init_sigma, (-1, 1)), _t_real)
+        # exps: [n_nucl, n_nucl]
+        exps = jnp.exp(-0.5 * jnp.sum(((r[:, None] - r0) / sigma)**2, -1))
+        return jnp.linalg.slogdet(exps)
 
 
 def build_jastrow_slater(nuclei, elems, spin=None, 

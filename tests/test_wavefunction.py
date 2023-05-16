@@ -1,12 +1,14 @@
 # many test functions are borrowed from vmcnet
 
-import pytest
 import jax
 import numpy as np
+import pytest
 from jax import numpy as jnp
 
 from fvmc.utils import pdist
-from fvmc.wavefunction import SimpleJastrow, SimpleOrbital, SimpleSlater, build_jastrow_slater
+from fvmc.wavefunction import (NucleiGaussian, NucleiGaussianSlater,
+                               SimpleJastrow, SimpleOrbital, SimpleSlater,
+                               build_jastrow_slater)
 
 
 def make_collapse_conf():
@@ -100,3 +102,33 @@ def test_jastrow_slater():
     sign_sla, log_sla = model.model.submodels[1].apply(subp1, nuclei, x)
     np.testing.assert_allclose(sign, sign_sla)
     np.testing.assert_allclose(logf, log_jas + log_sla)
+
+
+def test_nuclei_gaussian():
+    nuclei, elems, x = make_collapse_conf()
+    r = nuclei
+    model = NucleiGaussian(nuclei, 0.1)
+    params = model.init(_key0, r, x)
+
+    sign, logf = model.apply(params, r, x)
+    np.testing.assert_allclose(sign, 1.0)
+    np.testing.assert_allclose(logf, 0.0)
+
+
+def test_nuclei_gaussian_slater():
+    nuclei, elems, x = make_collapse_conf()
+    r = nuclei
+    model = NucleiGaussianSlater(nuclei, 0.01)
+    params = model.init(_key0, r, x)
+
+    sign, logf = model.apply(params, r, x)
+    np.testing.assert_allclose(sign, 1.0)
+    np.testing.assert_allclose(logf, 0.0)
+
+    iperm = jnp.arange(r.shape[0], dtype=int).at[:2].set([1,0])
+    pr = r[iperm, :]
+    psign, plogf = model.apply(params, pr, x)
+    np.testing.assert_allclose(psign, -1.0)
+    np.testing.assert_allclose(plogf, logf)
+
+
