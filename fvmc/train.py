@@ -10,7 +10,7 @@ from ml_collections import ConfigDict
 from tensorboardX import SummaryWriter
 
 from . import LOGGER
-from .estimator import build_eval_local, build_eval_total
+from .estimator import build_eval_local_elec, build_eval_total
 from .neuralnet import FermiNet
 from .optimizer import build_lr_schedule, build_optimizer
 from .sampler import build_sampler, make_batched, make_multistep
@@ -99,7 +99,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
     log_prob_fn = log_prob_from_model(ansatz)
 
     # make estimators
-    local_fn = build_eval_local(ansatz, ions, elems)
+    local_fn = build_eval_local_elec(ansatz, ions, elems)
     loss_fn = build_eval_total(local_fn, 
         pmap_axis_name=PAXIS.name, **optimize_cfg.loss)
     loss_and_grad = jax.value_and_grad(loss_fn, has_aux=True)

@@ -17,12 +17,9 @@ def clip_around(a, target, half_range, stop_gradient=True):
     return jnp.clip(a, c_min, c_max)
 
 
-def build_eval_local(model, ions, elems):
+def build_eval_local_elec(model, ions, elems):
     """create a function that evaluates local energy, sign and log abs of wavefunction.
     
-    The created function will calculate these quantities for both ket and bra (conjugated),
-    resulting the returned array having an extra dimension of size 2 at end, for ket and bra.
-
     Args:
         model (nn.Module): a flax module that calculates the sign and log abs of wavefunction.
             `model.apply` should have signature (params, x) -> (sign(f(x)), log|f(x)|)
@@ -43,6 +40,30 @@ def build_eval_local(model, ions, elems):
     return eval_local
 
 
+def build_eval_local_full(model, elems):
+    """create a function that evaluates local energy, sign and log abs of full wavefunction.
+    
+    Args:
+        model (nn.Module): a flax module that calculates the sign and log abs of wavefunction.
+            `model.apply` should have signature (params, r, x) -> (sign(f), log|f|)
+        elems (Array): the element indices (charges) of ions (corresponding to `r`).
+
+    Returns:
+        Callable with signature (params, conf) -> (eloc, sign, logf) that evaluates 
+        local energy, sign and log abs of wavefunctions on given parameters and conf.
+        `conf` here is a tuple of (r, x) contains ion (r) and electron (x) positions.
+    """
+
+    def eval_local(params, conf):
+        r, x = conf
+        log_psi_abs = ith_output(partial(model.apply, params), 1)
+        eloc = calc_local_energy(log_psi_abs, elems, r, x, ion_ke=True)
+        sign, logf = model.apply(params, r, x)
+        return eloc, sign, logf
+
+    return eval_local
+
+
 def build_eval_total(eval_local_fn, energy_clipping=None, 
                      grad_stablizing=False, pmap_axis_name=PMAP_AXIS_NAME, 
                      use_weighted=False):
@@ -55,8 +76,6 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
     Args:
         eval_local_fn (Callable): callable which evaluates 
             the local energy, sign and log of absolute value of wfn.
-            Should return a tuple with shape ([..., 2], [..., 2], [..., 2]),
-            where the last dim of size 2 corresponds to ket and bra (conj'd) results.
         energy_clipping (float, optional): If greater than zero, clip local energies that are
             outside [E_t - n D, E_t + n D], where E_t is the mean local energy, n is
             this value and D the mean absolute deviation of the local energies.
@@ -99,8 +118,8 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
         Note that instead of doing the h.c., we are using 2 * Real[...].
         """
         # data is a tuple of sample and log of sampling weight
-        x, _ = data
-        eloc, sign, logf = batch_local(params, x)
+        conf, _ = data
+        eloc, sign, logf = batch_local(params, conf)
 
         # compute total energy
         etot = paxis.all_mean(eloc.real)
@@ -140,8 +159,6 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
     Args:
         eval_local_fn (Callable): callable which evaluates 
             the local energy, sign and log of absolute value of wfn.
-            Should return a tuple with shape ([..., 2], [..., 2], [..., 2]),
-            where the last dim of size 2 corresponds to ket and bra (conj'd) results.
         energy_clipping (float, optional): If greater than zero, clip local energies that are
             outside [E_t - n D, E_t + n D], where E_t is the mean local energy, n is
             this value and D the mean absolute deviation of the local energies.
@@ -176,9 +193,9 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
         Note that instead of doing the h.c., we are using 2 * Real[...].
         """
         # data is a tuple of sample and log of sampling weight
-        x, logsw = data
+        conf, logsw = data
         logsw = lax.stop_gradient(logsw)
-        eloc, sign, logf = batch_local(params, x)
+        eloc, sign, logf = batch_local(params, conf)
 
         # calculating relative weights for stats
         rel_w, lshift = exp_shifted(2*logf.real - logsw, 

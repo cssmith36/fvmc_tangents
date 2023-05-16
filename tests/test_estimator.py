@@ -5,7 +5,7 @@ import jax
 import numpy as np
 from jax import numpy as jnp
 
-from fvmc.estimator import build_eval_local, build_eval_total, build_eval_total_weighted
+from fvmc.estimator import build_eval_local_elec, build_eval_total, build_eval_total_weighted
 from .test_hamiltonian import make_test_log_f, make_test_ions, make_test_x
 
 
@@ -30,7 +30,7 @@ def test_eval_local_shape():
     f, logf = make_test_log_f()
     model = make_dummy_model(get_sign_log(f))
     ions, elems = make_test_ions()
-    eval_local = build_eval_local(model, ions, elems)
+    eval_local = build_eval_local_elec(model, ions, elems)
     
     a = None
     x = make_test_x()
