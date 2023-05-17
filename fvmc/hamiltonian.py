@@ -67,7 +67,7 @@ def calc_ke_full(log_psi, mass, r, x):
     # adapted from FermiNet and vmcnet
     # calc -0.5 * (\nable^2 \psi) / \psi
     # handle batch of r, x automatically
-    mass = mass.reshape(-1)
+    mass = jnp.reshape(mass, -1)
 
     def _lapl_over_psi(r, x):
         # (\nable^2 f) / f = \nabla^2 log|f| + (\nabla log|f|)^2
@@ -98,8 +98,13 @@ def calc_ke_full(log_psi, mass, r, x):
     return -0.5 * lapl_fn(r, x)
 
 
-def calc_local_energy(log_psi, elems, r, x, ion_ke=False):
-    ke = calc_ke_elec(log_psi, x) 
+def calc_local_energy(log_psi, elems, r, x, nuclei_ke=False):
+    if nuclei_ke:
+        from .utils import PROTON_MASS, ISOTOPE_MAIN
+        mass = PROTON_MASS * ISOTOPE_MAIN[elems.astype(int)] # neutrons are treated as 1
+        ke = calc_ke_full(log_psi, mass, r, x)
+    else:
+        ke = calc_ke_elec(log_psi, x) 
     pe = calc_pe(elems, r, x)
     return ke + pe
     

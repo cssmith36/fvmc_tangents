@@ -1,23 +1,28 @@
 # many test functions are borrowed from vmcnet
 
-import pytest
 import jax
 import numpy as np
+import pytest
 from jax import numpy as jnp
 
-from fvmc.estimator import build_eval_local_elec, build_eval_total, build_eval_total_weighted
-from .test_hamiltonian import make_test_log_f, make_test_ions, make_test_x
+from fvmc.estimator import (build_eval_local_elec, build_eval_local_full,
+                            build_eval_total, build_eval_total_weighted)
+
+from .test_hamiltonian import make_test_ions, make_test_log_f, make_test_x
 
 
 class Dummy:
     pass
 
 
-def get_sign_log(func):
+def get_sign_log(func, dummy_r=False):
     def log_sign(params, x):
         f = func(params, x)
         return jnp.sign(f), jnp.log(jnp.abs(f))
-    return log_sign
+    if dummy_r:
+        return lambda p, r, x: log_sign(p, x)
+    else:
+        return log_sign
 
 
 def make_dummy_model(apply_fn):
@@ -39,6 +44,23 @@ def test_eval_local_shape():
 
     bx = jnp.stack([x, x, x], 0) #batch dim has size 3
     beloc, bsign, blogf = jax.vmap(eval_local, (None, 0))(a, bx)
+    assert beloc.shape == bsign.shape == blogf.shape == (3,)
+
+
+def test_eval_local_full_shape():
+    f, logf = make_test_log_f()
+    model = make_dummy_model(get_sign_log(f, dummy_r=True))
+    r, elems = make_test_ions()
+    eval_local = build_eval_local_full(model, elems)
+    
+    a = None
+    x = make_test_x()
+    eloc, sign, logf = eval_local(a, (r,x))
+    assert eloc.shape == sign.shape == logf.shape == tuple()
+
+    br = jnp.stack([r, r, r], 0) #batch dim has size 3
+    bx = jnp.stack([x, x, x], 0) #batch dim has size 3
+    beloc, bsign, blogf = jax.vmap(eval_local, (None, 0))(a, (br, bx))
     assert beloc.shape == bsign.shape == blogf.shape == (3,)
 
 

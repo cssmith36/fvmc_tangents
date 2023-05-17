@@ -28,6 +28,9 @@ _t_cplx = complex
 # _t_cplx = jnp.complex128
 
 
+PMAP_AXIS_NAME = "_pmap_axis"
+
+
 def adaptive_split(key, num=2, multi_device=False):
     if multi_device:
         import kfac_jax
@@ -254,6 +257,19 @@ def adaptive_residual(x, y, rescale=False):
     return (x + y) / scale
 
 
+def exp_shifted(x, normalize=None, pmap_axis_name=PMAP_AXIS_NAME):
+    paxis = PmapAxis(pmap_axis_name)
+    stblz = paxis.all_max(lax.stop_gradient(x))
+    exp = jnp.exp(x - stblz)
+    if normalize:
+        assert normalize.lower() in ("sum", "mean"), "invalid normalize option"
+        reducer = getattr(paxis, f"all_{normalize.lower()}")
+        total = reducer(lax.stop_gradient(exp))
+        exp /= total
+        stblz += jnp.log(total)
+    return exp, stblz
+
+
 def log_linear_exp(
     signs: Array,
     vals: Array,
@@ -397,18 +413,130 @@ class PmapAxis:
         object.__setattr__(self, "all_average", 
             lambda a, w: self.all_mean(a * w) / self.all_mean(w))
 
-PMAP_AXIS_NAME = "_pmap_axis"
 PAXIS = PmapAxis(PMAP_AXIS_NAME)
 
 
-def exp_shifted(x, normalize=None, pmap_axis_name=PMAP_AXIS_NAME):
-    paxis = PmapAxis(pmap_axis_name)
-    stblz = paxis.all_max(lax.stop_gradient(x))
-    exp = jnp.exp(x - stblz)
-    if normalize:
-        assert normalize.lower() in ("sum", "mean"), "invalid normalize option"
-        reducer = getattr(paxis, f"all_{normalize.lower()}")
-        total = reducer(lax.stop_gradient(exp))
-        exp /= total
-        stblz += jnp.log(total)
-    return exp, stblz
+PROTON_MASS = 1836.152673
+
+# copied from PySCF
+ISOTOPE_MAIN = onp.array([
+    0  ,   # GHOST
+    1  ,   # H
+    4  ,   # He
+    7  ,   # Li
+    9  ,   # Be
+    11 ,   # B
+    12 ,   # C
+    14 ,   # N
+    16 ,   # O
+    19 ,   # F
+    20 ,   # Ne
+    23 ,   # Na
+    24 ,   # Mg
+    27 ,   # Al
+    28 ,   # Si
+    31 ,   # P
+    32 ,   # S
+    35 ,   # Cl
+    40 ,   # Ar
+    39 ,   # K
+    40 ,   # Ca
+    45 ,   # Sc
+    48 ,   # Ti
+    51 ,   # V
+    52 ,   # Cr
+    55 ,   # Mn
+    56 ,   # Fe
+    59 ,   # Co
+    58 ,   # Ni
+    63 ,   # Cu
+    64 ,   # Zn
+    69 ,   # Ga
+    74 ,   # Ge
+    75 ,   # As
+    80 ,   # Se
+    79 ,   # Br
+    84 ,   # Kr
+    85 ,   # Rb
+    88 ,   # Sr
+    89 ,   # Y
+    90 ,   # Zr
+    93 ,   # Nb
+    98 ,   # Mo
+    98 ,   # 98Tc
+    102,   # Ru
+    103,   # Rh
+    106,   # Pd
+    107,   # Ag
+    114,   # Cd
+    115,   # In
+    120,   # Sn
+    121,   # Sb
+    130,   # Te
+    127,   # I
+    132,   # Xe
+    133,   # Cs
+    138,   # Ba
+    139,   # La
+    140,   # Ce
+    141,   # Pr
+    144,   # Nd
+    145,   # Pm
+    152,   # Sm
+    153,   # Eu
+    158,   # Gd
+    159,   # Tb
+    162,   # Dy
+    162,   # Ho
+    168,   # Er
+    169,   # Tm
+    174,   # Yb
+    175,   # Lu
+    180,   # Hf
+    181,   # Ta
+    184,   # W
+    187,   # Re
+    192,   # Os
+    193,   # Ir
+    195,   # Pt
+    197,   # Au
+    202,   # Hg
+    205,   # Tl
+    208,   # Pb
+    209,   # Bi
+    209,   # Po
+    210,   # At
+    222,   # Rn
+    223,   # Fr
+    226,   # Ra
+    227,   # Ac
+    232,   # Th
+    231,   # Pa
+    238,   # U
+    237,   # Np
+    244,   # Pu
+    243,   # Am
+    247,   # Cm
+    247,   # Bk
+    251,   # Cf
+    252,   # Es
+    257,   # Fm
+    258,   # Md
+    259,   # No
+    262,   # Lr
+    261,   # Rf
+    262,   # Db
+    263,   # Sg
+    262,   # Bh
+    265,   # Hs
+    266,   # Mt
+    0  ,   # Ds
+    0  ,   # Rg
+    0  ,   # Cn
+    0  ,   # Nh
+    0  ,   # Fl
+    0  ,   # Mc
+    0  ,   # Lv
+    0  ,   # Ts
+    0  ,   # Og
+])

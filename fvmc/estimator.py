@@ -57,7 +57,7 @@ def build_eval_local_full(model, elems):
     def eval_local(params, conf):
         r, x = conf
         log_psi_abs = ith_output(partial(model.apply, params), 1)
-        eloc = calc_local_energy(log_psi_abs, elems, r, x, ion_ke=True)
+        eloc = calc_local_energy(log_psi_abs, elems, r, x, nuclei_ke=True)
         sign, logf = model.apply(params, r, x)
         return eloc, sign, logf
 
