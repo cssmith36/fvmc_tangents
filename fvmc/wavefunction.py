@@ -219,7 +219,7 @@ class NucleiGaussianSlater(FullWfn):
         return jnp.linalg.slogdet(exps)
 
 
-def build_jastrow_slater(nuclei, elems, spin=None, 
+def build_jastrow_slater(elems, nuclei, spin=None, 
         full_det=True, orbital_type="simple", orbital_args=None):
     orbital_args = orbital_args or {}
     jastrow = SimpleJastrow(elems)

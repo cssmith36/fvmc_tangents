@@ -17,7 +17,7 @@ def clip_around(a, target, half_range, stop_gradient=True):
     return jnp.clip(a, c_min, c_max)
 
 
-def build_eval_local_elec(model, nuclei, elems):
+def build_eval_local_elec(model, elems, nuclei):
     """create a function that evaluates local energy, sign and log abs of wavefunction.
     
     Args:

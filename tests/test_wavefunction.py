@@ -92,7 +92,7 @@ def test_jastrow_slater():
     nuclei, elems, x = make_collapse_conf()
     x = x[0]
     n_el = x.shape[0]
-    model = build_jastrow_slater(nuclei, elems, None, full_det=True, orbital_args={"n_hidden": 1})
+    model = build_jastrow_slater(elems, nuclei, None, full_det=True, orbital_args={"n_hidden": 1})
     params = model.init(_key0, x)
     subp0 = {"params": params["params"]['model']["submodels_0"]}
     subp1 = {"params": params["params"]['model']["submodels_1"]}

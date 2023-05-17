@@ -21,8 +21,8 @@ from .wavefunction import FixNuclei, build_jastrow_slater, log_prob_from_model
 
 
 class SysInfo(NamedTuple):
-    nuclei: Array
     elems: Array
+    nuclei: Array
     n_elec: Tuple[int, int]
 
 
@@ -87,19 +87,19 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         f"system with {tot_elec} electrons cannot have spin {spin}"
     n_elec = (tot_elec + spin) // 2, (tot_elec - spin) // 2
     elec_shape = onp.array([tot_elec, 3])
-    system = SysInfo(nuclei, elems, n_elec)
+    system = SysInfo(elems, nuclei, n_elec)
 
     # make wavefunction
     if isinstance(ansatz_cfg, nn.Module):
         ansatz = ansatz_cfg
     else:
         ansatz_cfg = ConfigDict(ansatz_cfg)
-        # ansatz = build_jastrow_slater(nuclei, elems, spin, **ansatz_cfg)
-        ansatz = FixNuclei(FermiNet(spin, **ansatz_cfg), nuclei=nuclei)
+        ansatz = build_jastrow_slater(elems, nuclei, spin, **ansatz_cfg)
+        # ansatz = FixNuclei(FermiNet(spin, **ansatz_cfg), nuclei=nuclei)
     log_prob_fn = log_prob_from_model(ansatz)
 
     # make estimators
-    local_fn = build_eval_local_elec(ansatz, nuclei, elems)
+    local_fn = build_eval_local_elec(ansatz, elems, nuclei)
     loss_fn = build_eval_total(local_fn, 
         pmap_axis_name=PAXIS.name, **optimize_cfg.loss)
     loss_and_grad = jax.value_and_grad(loss_fn, has_aux=True)
