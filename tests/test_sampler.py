@@ -1,10 +1,10 @@
-import pytest
 import jax
 import numpy as np
+import pytest
 from jax import numpy as jnp
 
-from fvmc.sampler import choose_sampler_builder, make_batched, make_multistep, make_chained
-
+from fvmc.sampler import (build_conf_init_fn, choose_sampler_builder,
+                          make_batched, make_chained, make_multistep)
 
 _mean = 0.5
 _std = 0.5
@@ -47,7 +47,21 @@ def shared_sampler_test(sampler, jit=True):
     np.testing.assert_allclose(sample.mean(), _mean, rtol=0.05)
     np.testing.assert_allclose(sample.std(), _std, rtol=0.05)
 
-    
+
+@pytest.mark.parametrize("with_r", [True, False])
+def test_conf_init_shape(with_r):
+    elems = jnp.array([2, 2])
+    nuclei = jnp.array([[-1, 0, 0], [1., 0, 0]])
+    for n_elec in (3, 4, 5):
+        init_fn = build_conf_init_fn(elems, nuclei, n_elec, with_r=with_r)
+        if with_r:
+            init_r, init_x = init_fn(_key0)
+            assert init_r.shape == nuclei.shape
+        else:
+            init_x = init_fn(_key0)
+        assert init_x.shape == (n_elec, nuclei.shape[-1])
+
+
 def test_sampler_gaussian():
     sampler = make_test_sampler("gaussian")
     shared_sampler_test(sampler, jit=True)

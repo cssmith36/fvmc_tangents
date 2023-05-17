@@ -8,7 +8,7 @@ from jax import lax
 from jax import numpy as jnp
 
 from .utils import (Array, ArrayTree, PyTree, adaptive_split, clip_gradient,
-                    ravel_shape, tree_map, tree_where)
+                    ravel_shape, tree_map, tree_where, parse_spin)
 from .wavefunction import nn
 
 KeyArray = Array
@@ -63,6 +63,33 @@ def build_sampler(log_prob_fn: Callable[[Params, Sample], Array],
     builder = choose_sampler_builder(name)
     logdens_fn = lambda p, x: beta * log_prob_fn(p, x)
     return builder(logdens_fn, shape_or_init, **kwargs)
+
+
+def build_conf_init_fn(elems, nuclei, n_elec, 
+                       sigma_x=1., with_r=False, sigma_r=0.1):
+    elems = jnp.asarray(elems, dtype=int)
+    n_dim = nuclei.shape[-1]
+    n_elec = int(sum(n_elec)) if not isinstance(n_elec, int) else n_elec
+    if elems.sum() != n_elec: # put extra charge in first atoms
+        elems = elems.at[0].add(n_elec - elems.sum())
+
+    def init_fn(key):
+        xa, xb = [], []
+        sp = 1
+        for el, nuc in zip(elems, nuclei):
+            key, ska, skb = jax.random.split(key, 3)
+            na, nb = parse_spin(el, el%2 * sp)
+            xa.append(nuc + jax.random.normal(ska, (na, n_dim)) * sigma_x)
+            xb.append(nuc + jax.random.normal(skb, (nb, n_dim)) * sigma_x)
+            sp = - sp
+        init_x = jnp.concatenate(xa + xb, axis=0)[:n_elec]
+        if not with_r:
+            return init_x
+        else:
+            init_r = nuclei + jax.random.normal(key, nuclei.shape) * sigma_r
+            return init_r, init_x
+    
+    return init_fn
 
 
 ##### Below are sampler transformations #####

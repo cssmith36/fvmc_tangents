@@ -227,4 +227,3 @@ def build_jastrow_slater(elems, nuclei, spin=None,
     model = ProductModel([jastrow, slater])
     elec_model = FixNuclei(model, nuclei)
     return elec_model
-    
