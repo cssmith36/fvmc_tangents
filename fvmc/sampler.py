@@ -72,16 +72,14 @@ def build_conf_init_fn(elems, nuclei, n_elec,
     n_elec = int(sum(n_elec)) if not isinstance(n_elec, int) else n_elec
     if elems.sum() != n_elec: # put extra charge in first atoms
         elems = elems.at[0].add(n_elec - elems.sum())
+    elec_list = [parse_spin(el, el%2 * (-1)**ii) for ii, el in enumerate(elems)]
 
     def init_fn(key):
         xa, xb = [], []
-        sp = 1
-        for el, nuc in zip(elems, nuclei):
+        for (na, nb), nuc in zip(elec_list, nuclei):
             key, ska, skb = jax.random.split(key, 3)
-            na, nb = parse_spin(el, el%2 * sp)
             xa.append(nuc + jax.random.normal(ska, (na, n_dim)) * sigma_x)
             xb.append(nuc + jax.random.normal(skb, (nb, n_dim)) * sigma_x)
-            sp = - sp
         init_x = jnp.concatenate(xa + xb, axis=0)[:n_elec]
         if not with_r:
             return init_x
@@ -361,7 +359,7 @@ def _gen_init_from_refresh(refresh_fn, shape_or_init):
         raw_init = lambda key: jax.random.normal(key, (size,)) * sigma + mu
     else:
         from jax.flatten_util import ravel_pytree
-        raw_init, unravel = lambda key: ravel_pytree(shape_or_init(key))
+        raw_init = lambda key: ravel_pytree(shape_or_init(key))[0]
 
     def init(key, params):
         sample = raw_init(key)

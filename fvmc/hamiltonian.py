@@ -101,7 +101,8 @@ def calc_ke_full(log_psi, mass, r, x):
 def calc_local_energy(log_psi, elems, r, x, nuclei_ke=False):
     if nuclei_ke:
         from .utils import PROTON_MASS, ISOTOPE_MAIN
-        mass = PROTON_MASS * ISOTOPE_MAIN[elems.astype(int)] # neutrons are treated as 1
+        # neutrons are treated as 1
+        mass = PROTON_MASS * jnp.asarray(ISOTOPE_MAIN)[elems.astype(int)]
         ke = calc_ke_full(log_psi, mass, r, x)
     else:
         ke = calc_ke_elec(log_psi, x) 

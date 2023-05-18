@@ -62,6 +62,15 @@ def test_conf_init_shape(with_r):
         assert init_x.shape == (n_elec, nuclei.shape[-1])
 
 
+def test_conf_init_collapse():
+    elems = jnp.array([2, 2])
+    nuclei = jnp.array([[-1, 0, 0], [1., 0, 0]])
+    n_elec = 4
+    init_fn = build_conf_init_fn(elems, nuclei, n_elec, with_r=False, sigma_x=0)
+    init_x = init_fn(_key0)
+    np.testing.assert_allclose(init_x, jnp.concatenate([nuclei, nuclei]))
+
+
 def test_sampler_gaussian():
     sampler = make_test_sampler("gaussian")
     shared_sampler_test(sampler, jit=True)

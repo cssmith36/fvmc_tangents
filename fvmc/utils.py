@@ -116,7 +116,6 @@ def build_moving_avg(decay=0.99, early_growth=True):
 
 def ravel_shape(target_shape):
     from jax.flatten_util import ravel_pytree
-    target_shape = onp.array(target_shape)
     tmp = tree_map(jnp.zeros, target_shape)
     flat, unravel_fn = ravel_pytree(tmp)
     return flat.size, unravel_fn

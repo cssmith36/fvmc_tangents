@@ -10,10 +10,12 @@ from ml_collections import ConfigDict
 from tensorboardX import SummaryWriter
 
 from . import LOGGER
-from .estimator import build_eval_local_elec, build_eval_total
+from .estimator import (build_eval_local_elec, build_eval_local_full,
+                        build_eval_total)
 from .neuralnet import FermiNet
 from .optimizer import build_lr_schedule, build_optimizer
-from .sampler import build_sampler, make_batched, make_multistep
+from .sampler import (build_conf_init_fn, build_sampler, make_batched,
+                      make_multistep)
 from .utils import (PAXIS, Array, ArrayTree, Printer, PyTree, adaptive_split,
                     cfg_to_yaml, load_pickle, multi_process_name,
                     save_checkpoint)
@@ -64,8 +66,8 @@ def match_loaded_state_to_device(train_state, multi_device: bool):
     return TrainingState(key, params, mc_state, opt_state)
 
 
-def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg, 
-            key=None, restart_cfg=None, multi_device=False):
+def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
+            fully_quantum=False, key=None, restart_cfg=None, multi_device=False):
     """prepare system, ansatz, sampler, optimizer and training state"""
 
     # handle multi device settings
@@ -86,7 +88,6 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
     assert (tot_elec - spin) % 2 == 0, \
         f"system with {tot_elec} electrons cannot have spin {spin}"
     n_elec = (tot_elec + spin) // 2, (tot_elec - spin) // 2
-    elec_shape = onp.array([tot_elec, 3])
     system = SysInfo(elems, nuclei, n_elec)
 
     # make wavefunction
@@ -94,12 +95,15 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         ansatz = ansatz_cfg
     else:
         ansatz_cfg = ConfigDict(ansatz_cfg)
-        ansatz = build_jastrow_slater(elems, nuclei, spin, **ansatz_cfg)
-        # ansatz = FixNuclei(FermiNet(spin, **ansatz_cfg), nuclei=nuclei)
+        ansatz = build_jastrow_slater(elems, nuclei, spin, 
+            dynamic_nuclei=fully_quantum, **ansatz_cfg)
+        if not fully_quantum:
+            ansatz = FixNuclei(ansatz)
     log_prob_fn = log_prob_from_model(ansatz)
 
     # make estimators
-    local_fn = build_eval_local_elec(ansatz, elems, nuclei)
+    local_fn = (build_eval_local_full(ansatz, elems) if fully_quantum
+                else build_eval_local_elec(ansatz, elems, nuclei))
     loss_fn = build_eval_total(local_fn, 
         pmap_axis_name=PAXIS.name, **optimize_cfg.loss)
     loss_and_grad = jax.value_and_grad(loss_fn, has_aux=True)
@@ -111,9 +115,11 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         LOGGER.warning("Sample size not divisible by batch size, rounding up")
     n_multistep = -(-n_sample // n_chain)
     n_batch = n_chain // n_device
+    conf_init_fn = build_conf_init_fn(
+        elems, nuclei, tot_elec, with_r=fully_quantum)
     raw_sampler = build_sampler(
         log_prob_fn, 
-        elec_shape, 
+        conf_init_fn, 
         name=sample_cfg.sampler,
         **sample_cfg.get(sample_cfg.sampler, {}))
     sampler = make_multistep(raw_sampler, n_step=n_multistep, concat=False)
@@ -152,9 +158,10 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
             params = load_pickle(param_path)
             if isinstance(params, tuple): params = params[1]
         else:
-            key, parkey = jax.random.split(key) # init use single key
-            fake_input = jnp.zeros((tot_elec, 3))
-            params = ansatz.init(parkey, fake_input)
+            key, parkey, skey = jax.random.split(key, 3) # init use single key
+            fake_input = conf_init_fn(skey)
+            params = (ansatz.init(parkey, *fake_input) if fully_quantum 
+                      else ansatz.init(parkey, fake_input))
         if multi_device:
             params = kfac_jax.utils.replicate_all_local_devices(params)
         # after init params, use pmapped key
@@ -256,7 +263,7 @@ def main(cfg):
     key = jax.random.PRNGKey(cfg.seed) if 'seed' in cfg else None
     system, ansatz, loss_fn, sampler, optimizer, train_state \
         = prepare(cfg.system, cfg.ansatz, cfg.sample, cfg.optimize, 
-                  key, cfg.restart, cfg.multi_device)
+                  cfg.fully_quantum, key, cfg.restart, cfg.multi_device)
 
     training_step = build_training_step(sampler, optimizer)
     train_state = run(training_step, train_state, cfg.optimize.iterations, cfg.log)

@@ -219,11 +219,14 @@ class NucleiGaussianSlater(FullWfn):
         return jnp.linalg.slogdet(exps)
 
 
-def build_jastrow_slater(elems, nuclei, spin=None, 
+def build_jastrow_slater(elems, nuclei, spin=None, dynamic_nuclei=False,
         full_det=True, orbital_type="simple", orbital_args=None):
     orbital_args = orbital_args or {}
     jastrow = SimpleJastrow(elems)
     slater = SimpleSlater(spin, full_det, orbital_type, orbital_args)
-    model = ProductModel([jastrow, slater])
-    elec_model = FixNuclei(model, nuclei)
-    return elec_model
+    mlist = [jastrow, slater]
+    if dynamic_nuclei:
+        mlist.append(NucleiGaussianSlater(nuclei, 0.1))
+    model = ProductModel(mlist)
+    # elec_model = FixNuclei(model, nuclei)
+    return model
