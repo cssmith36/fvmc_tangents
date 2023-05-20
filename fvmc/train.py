@@ -98,7 +98,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         ansatz = build_jastrow_slater(elems, nuclei, spin, 
             dynamic_nuclei=fully_quantum, **ansatz_cfg)
         if not fully_quantum:
-            ansatz = FixNuclei(ansatz)
+            ansatz = FixNuclei(ansatz, nuclei)
     log_prob_fn = log_prob_from_model(ansatz)
 
     # make estimators
