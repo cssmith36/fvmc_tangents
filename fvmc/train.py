@@ -19,7 +19,8 @@ from .sampler import (build_conf_init_fn, build_sampler, make_batched,
 from .utils import (PAXIS, Array, ArrayTree, Printer, PyTree, adaptive_split,
                     cfg_to_yaml, load_pickle, multi_process_name,
                     save_checkpoint)
-from .wavefunction import FixNuclei, build_jastrow_slater, log_prob_from_model
+from .wavefunction import (FixNuclei, NucleiGaussianSlater, ProductModel,
+                           build_jastrow_slater, log_prob_from_model)
 
 
 class SysInfo(NamedTuple):
@@ -95,9 +96,12 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         ansatz = ansatz_cfg
     else:
         ansatz_cfg = ConfigDict(ansatz_cfg)
-        ansatz = build_jastrow_slater(elems, nuclei, spin, 
-            dynamic_nuclei=fully_quantum, **ansatz_cfg)
-        if not fully_quantum:
+        # ansatz = build_jastrow_slater(elems, nuclei, spin, 
+        #     dynamic_nuclei=fully_quantum, **ansatz_cfg)
+        ansatz = FermiNet(spin=spin, **ansatz_cfg)
+        if fully_quantum:
+            ansatz = ProductModel([ansatz, NucleiGaussianSlater(nuclei, 0.1)])
+        else:
             ansatz = FixNuclei(ansatz, nuclei)
     log_prob_fn = log_prob_from_model(ansatz)
 
