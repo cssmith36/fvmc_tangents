@@ -72,7 +72,7 @@ class Atom_Embedding(nn.Module):
         return h1
 
 
-def aggregate_features(h1, h2, n_elec, absolute_spin):
+def aggregate_features(h1, h2, n_elec, spin_symmetry):
     n_elec = onp.array(n_elec)
     assert n_elec.sum() == h1.shape[0]
     n_up, n_dn = n_elec
@@ -83,13 +83,13 @@ def aggregate_features(h1, h2, n_elec, absolute_spin):
             for h2_spin in jnp.split(h2, n_elec[:1], axis=1) 
             if h2_spin.size > 0
         ], axis=-2)
-    if not absolute_spin:
+    if spin_symmetry:
         h2_mean = h2_mean.at[n_up:].set(h2_mean[n_up:, (1, 0)])
     one_in = jnp.concatenate([h1, h2_mean.reshape(h1.shape[0], -1)], axis=-1)
     # Global input
     h1_up, h1_dn = jnp.split(h1, n_elec[:1], axis=0)
     all_up, all_dn = h1_up.mean(0), h1_dn.mean(0)
-    if absolute_spin:
+    if not spin_symmetry:
         all_in = jnp.array([[all_up, all_dn], [all_up, all_dn]])
     else:
         all_in = jnp.array([[all_up, all_dn], [all_dn, all_up]])
@@ -121,15 +121,15 @@ class FermiLayer(nn.Module):
     n_elec: Tuple[int, int]
     activation: str = "gelu"
     rescale_residual: bool = True
-    absolute_spin: bool = False
-    update_pair_independent: bool = False
+    spin_symmetry: bool = True
+    identical_h2_update: bool = False
 
     @nn.compact
     def __call__(self, h1, h2):
         actv_fn = parse_activation(self.activation, rescale=self.rescale_residual)
 
         # Single update
-        one_in, all_in = aggregate_features(h1, h2, self.n_elec, self.absolute_spin)
+        one_in, all_in = aggregate_features(h1, h2, self.n_elec, self.spin_symmetry)
         # per electron contribution
         one_new = nn.Dense(self.single_size, param_dtype=_t_real)(one_in)
         # global contribution (all_new.shape == (2, n_single))
@@ -140,7 +140,7 @@ class FermiLayer(nn.Module):
         h1 = adaptive_residual(h1, actv_fn(h1_new), rescale=self.rescale_residual)
         
         # Pairwise update
-        if self.update_pair_independent:
+        if self.identical_h2_update:
             h2_new = nn.Dense(self.pair_size, param_dtype=_t_real)(h2)
         else:
             u, d = jnp.split(h2, self.n_elec[:1], axis=0)
@@ -269,8 +269,8 @@ class FermiNet(FullWfn):
     rescale_residual: bool = True
     jastrow_layers: int = 3
     embedding_size: Optional[int] = 32
-    absolute_spins: bool = False
-    update_pair_independent: bool = False
+    spin_symmetry: bool = True
+    identical_h2_update: bool = False
 
     @nn.compact
     def __call__(self, r: Array, x: Array) -> Array:
@@ -286,11 +286,11 @@ class FermiNet(FullWfn):
         for sdim, pdim in self.hidden_dims:
             flayer = FermiLayer(sdim, pdim, n_elec_spin, 
                 self.activation, self.rescale_residual, 
-                self.absolute_spins, self.update_pair_independent)
+                self.spin_symmetry, self.identical_h2_update)
             h1, h2 = flayer(h1, h2)
         
         orbital_map = OrbitalMap(n_elec_spin, 
-            self.determinants, self.full_det, not self.absolute_spins)
+            self.determinants, self.full_det, self.spin_symmetry)
         orbitals = orbital_map(h1, d_ei) # tuple of [n_det, n_orb, n_orb]
 
         signs, logdets = jax.tree_map(lambda *arrs: jnp.stack(arrs, axis=0),
