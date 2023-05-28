@@ -249,6 +249,14 @@ def parse_spin(n_el, spin):
     return n_up, n_dn
 
 
+def collect_elems(elems):
+    elems = jnp.asarray(elems)
+    assert elems.ndim == 1 and jnp.all(jnp.diff(elems) >= 0)
+    uelems, counts = jnp.unique(elems, return_counts=True)
+    assert jnp.all(jnp.repeat(uelems, counts) == elems)
+    return uelems, counts
+
+
 def adaptive_residual(x, y, rescale=False):
     if y.shape != x.shape:
         return y

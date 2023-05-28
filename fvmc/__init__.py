@@ -11,35 +11,40 @@ logging.basicConfig(force=True, format='# [%(asctime)s] %(levelname)s: %(message
 LOGGER = logging.getLogger("fvmc")
 del logging
 
-import warnings
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore", category=DeprecationWarning)
-    from . import (
-        utils,
-        hamiltonian,
-        wavefunction,
-        sampler,
-        estimator,
-        optimizer,
-        preconditioner,
-        config,
-        train,
-    )
+# import warnings
+# with warnings.catch_warnings():
+#     warnings.simplefilter("ignore", category=DeprecationWarning)
+#     from . import (
+#         utils,
+#         hamiltonian,
+#         wavefunction,
+#         sampler,
+#         estimator,
+#         optimizer,
+#         preconditioner,
+#         config,
+#         train,
+#         neuralnet,
+#     )
 
-# __all__ = [
-#     "utils",
-#     "hamiltonian",
-#     "wavefunction",
-#     "sampler",
-#     "estimator",
-#     "optimizer",
-#     "preconditioner",
-#     "config",
-#     "train",
-# ]
+__all__ = [
+    "utils",
+    "hamiltonian",
+    "wavefunction",
+    "sampler",
+    "estimator",
+    "optimizer",
+    "preconditioner",
+    "config",
+    "train",
+    "neuralnet",
+]
 
-# def __getattr__(name):
-#     from importlib import import_module
-#     if name in __all__:
-#         return import_module("." + name, __name__)
-#     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+def __getattr__(name):
+    from importlib import import_module
+    import warnings
+    if name in __all__:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=DeprecationWarning)
+            return import_module("." + name, __name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

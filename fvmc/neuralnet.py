@@ -72,28 +72,31 @@ class Atom_Embedding(nn.Module):
         return h1
 
 
-def aggregate_features(h1, h2, n_elec, spin_symmetry):
-    n_elec = onp.array(n_elec)
-    assert n_elec.sum() == h1.shape[0]
-    n_up, n_dn = n_elec
+def aggregate_features(h1, h2, split_sec, spin_symmetry):
+    assert split_sec.ndim == 1 and len(split_sec) >= 2
+    # last two sections are electrons with spin up and down
+    *elem_sec, n_up, n_dn = split_sec
+    split_idx = jnp.cumsum(split_sec)[:-1]
     # Single input
     h2_mean = jnp.stack(
         [
-            h2_spin.mean(axis=1)
-            for h2_spin in jnp.split(h2, n_elec[:1], axis=1) 
-            if h2_spin.size > 0
-        ], axis=-2)
+            h2_sec.mean(axis=1)
+            for h2_sec in jnp.split(h2, split_idx, axis=1) 
+            if h2_sec.size > 0
+        ], axis=-2) # [n_particle, n_sec, n_desc]
     if spin_symmetry:
-        h2_mean = h2_mean.at[n_up:].set(h2_mean[n_up:, (1, 0)])
+        h2_mean = h2_mean.at[-n_dn:, -2:].set(h2_mean[-n_dn:, (-1, -2)]) # switch spin
     one_in = jnp.concatenate([h1, h2_mean.reshape(h1.shape[0], -1)], axis=-1)
     # Global input
-    h1_up, h1_dn = jnp.split(h1, n_elec[:1], axis=0)
-    all_up, all_dn = h1_up.mean(0), h1_dn.mean(0)
-    if not spin_symmetry:
-        all_in = jnp.array([[all_up, all_dn], [all_up, all_dn]])
-    else:
-        all_in = jnp.array([[all_up, all_dn], [all_dn, all_up]])
-    all_in = all_in.reshape(2, -1)
+    h1_mean = jnp.tile(jnp.stack(
+        [
+            h1_sec.mean(axis=0)
+            for h1_sec in jnp.split(h1, split_idx, axis=0)
+            if h1_sec.size > 0
+        ], axis=-2), (len(split_sec), 1, 1)) # [n_sec, n_sec, n_desc]
+    if spin_symmetry:
+        h1_mean = h1_mean.at[-1, -2:].set(h1_mean[-1, (-1, -2)]) # switch spin
+    all_in = h1_mean.reshape(h1_mean.shape[0], -1)
     return one_in, all_in
 
 
