@@ -250,10 +250,10 @@ def parse_spin(n_el, spin):
 
 
 def collect_elems(elems):
-    elems = jnp.asarray(elems)
-    assert elems.ndim == 1 and jnp.all(jnp.diff(elems) >= 0)
-    uelems, counts = jnp.unique(elems, return_counts=True)
-    assert jnp.all(jnp.repeat(uelems, counts) == elems)
+    elems = onp.asarray(elems)
+    assert elems.ndim == 1 and onp.all(onp.diff(elems) >= 0)
+    uelems, counts = onp.unique(elems, return_counts=True)
+    assert onp.all(onp.repeat(uelems, counts) == elems)
     return uelems, counts
 
 
