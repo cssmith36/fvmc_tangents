@@ -8,7 +8,7 @@ from jax import numpy as jnp
 from fvmc.utils import pdist
 from fvmc.wavefunction import (NucleiGaussian, NucleiGaussianSlater,
                                SimpleJastrow, SimpleOrbital, SimpleSlater,
-                               build_jastrow_slater)
+                               build_jastrow_slater, FixNuclei)
 
 
 def make_collapse_conf():
@@ -74,7 +74,8 @@ def test_orbital_shape():
 def test_slater_antisymm(full_det, spin):
     nuclei, elems, x = make_collapse_conf()
     n_batch, n_el = x.shape[:-1]
-    slater = SimpleSlater(full_det=full_det, orbital_args={"n_hidden": 1})
+    slater = SimpleSlater(spin=spin, full_det=full_det, 
+                          orbital_args={"n_hidden": 1})
     params = slater.init(_key0, nuclei, x)
 
     x = x + jax.random.normal(_key0, x.shape)
@@ -92,7 +93,10 @@ def test_jastrow_slater():
     nuclei, elems, x = make_collapse_conf()
     x = x[0]
     n_el = x.shape[0]
-    model = build_jastrow_slater(elems, nuclei, None, full_det=True, orbital_args={"n_hidden": 1})
+    model = FixNuclei(
+        build_jastrow_slater(
+            elems, nuclei, None, full_det=True, orbital_args={"n_hidden": 1}),
+        nuclei=nuclei)
     params = model.init(_key0, x)
     subp0 = {"params": params["params"]['model']["submodels_0"]}
     subp1 = {"params": params["params"]['model']["submodels_1"]}

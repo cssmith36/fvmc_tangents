@@ -201,25 +201,28 @@ class OrbitalMap(nn.Module):
         # h_one is [n_nucl+n_elec, n_desc]
         # d_ei is [n_elec, n_nucl, 1]
         n_up, n_dn = self.n_elec
-        n_el = n_up + n_dn
+        n_el, n_nu = d_ei.shape[:-1]
+        assert n_up + n_dn == n_el
         n_det = self.determinants
 
         # make orbital from h1 and envelope
-        def orbital_fn(h, d, n_orb):
+        def orbital_fn(h1_el, h1_nu, d_ei, n_orb):
             n_param = n_orb * n_det
             dense = nn.Dense(n_param, param_dtype=_t_real)
             envelope = IsotropicEnvelope(n_orb, self.determinants)
             assert envelope.out_size == n_orb
             # Actual orbital function
-            return dense(h[-n_el:]).reshape(n_el, n_orb, n_det) * envelope(h, d) 
+            return dense(h1_el).reshape(-1, n_orb, n_det) * envelope(h1_nu, d_ei) 
 
         # Case destinction for weight sharing 
+        h1_nucl, h1_elec = jnp.split(h1, [n_nu])
+
         if self.share_weights:
-            uu, dd = jnp.split(orbital_fn(h1, d_ei, max(self.n_elec)), 
-                               self.n_elec[:1], axis=0)
-            ud, du = jnp.split(orbital_fn(h1, d_ei, max(self.n_elec)), 
+            uu, dd = jnp.split(orbital_fn(h1_elec, h1_nucl, d_ei, max(self.n_elec)), 
                                self.n_elec[:1], axis=0)
             if self.full_det:
+                ud, du = jnp.split(orbital_fn(h1_elec, h1_nucl, d_ei, max(self.n_elec)), 
+                                   self.n_elec[:1], axis=0)
                 orbitals = (jnp.concatenate([
                     jnp.concatenate([uu[:, :self.n_elec[0]], ud[:, :self.n_elec[1]]], axis=1),
                     jnp.concatenate([du[:, :self.n_elec[0]], dd[:, :self.n_elec[1]]], axis=1),
@@ -227,10 +230,10 @@ class OrbitalMap(nn.Module):
             else:
                 orbitals = (uu[:, :self.n_elec[0]], dd[:, :self.n_elec[1]])
         else:
-            h_by_spin = jnp.split(h1, self.n_elec[:1], axis=0)
+            h_by_spin = jnp.split(h1_elec, self.n_elec[:1], axis=0)
             d_by_spin = jnp.split(d_ei, self.n_elec[:1], axis=0)
             orbitals = tuple(
-                orbital_fn(h, d, no)
+                orbital_fn(h, h1_nucl, d, no)
                 for h, d, no in zip(
                     h_by_spin,
                     d_by_spin,
