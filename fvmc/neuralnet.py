@@ -22,10 +22,11 @@ def raw_features(r, x):
     n_elec = x.shape[0]
     n_nucl = r.shape[0]
     n_particle = n_nucl + n_elec
-    # initial h1 is empty
-    h1 = jnp.zeros((n_particle, 0))
-    # pair distances
+    # use both nuclei and electron positions
     pos = jnp.concatenate([r, x], axis=0)
+    # initial h1 is empty, trick to avoid error in kfac
+    h1 = pos[:, :1] * 0
+    # pair distances
     diff = diffmat(pos, pos)
     dist = jnp.linalg.norm(
         diff + jnp.eye(n_particle)[..., None],
@@ -37,7 +38,7 @@ def raw_features(r, x):
         diff, 
         dist * (1.0 - jnp.eye(n_particle)[..., None])
     ], axis=-1)
-    h2 = dmat * h2_scaling # [n_elec, n_elec, 4]
+    h2 = dmat * h2_scaling # [n_p, n_p, 4]
     return h1, h2, dmat
 
 
@@ -112,7 +113,7 @@ class FermiLayer(nn.Module):
         nucl_one, nucl_all, elec_one, elec_all = aggregate_features(
             h1, h2, self.split_sec, self.spin_symmetry
         )
-        
+
         # nuclei h1 part
         # per nucleus contribution
         n1_new = nn.Dense(self.single_size, param_dtype=_t_real)(nucl_one)
@@ -284,7 +285,7 @@ class FermiNet(FullWfn):
     full_det: bool = True
     activation: str = "gelu"
     rescale_residual: bool = True
-    type_embedding: int = 4
+    type_embedding: int = 5
     jastrow_layers: int = 3
     spin_symmetry: bool = True
     identical_h2_update: bool = False
