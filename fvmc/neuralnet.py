@@ -48,34 +48,46 @@ def aggregate_features(h1, h2, split_sec, spin_symmetry):
     *elem_sec, n_up, n_dn = split_sec
     n_nucl = sum(elem_sec)
     split_idx = onp.cumsum(split_sec)[:-1]
+    # nucl may consider all the electrons the same with spin symmetry
+    nucl_idx = split_idx[:-1] if spin_symmetry else split_idx
     # Single input
-    h2_mean = jnp.stack(
-        [
-            h2_sec.mean(axis=1)
-            for h2_sec in jnp.split(h2, split_idx, axis=1) 
-            if h2_sec.size > 0
-        ], axis=-2) # [n_particle, n_sec, n_desc]
-    nucl_h2m, elec_h2m = jnp.split(h2_mean, [n_nucl], axis=0)
+    nucl_h2m, elec_h2m = (
+        jnp.stack(
+            [
+                h2_sec.mean(axis=1)
+                for h2_sec in jnp.split(h2p, sidx, axis=1) 
+                if h2_sec.size > 0
+            ], axis=-2) # [n_nucl/elec, n_sec, n_desc]
+        for h2p, sidx in 
+        zip(jnp.split(h2, [n_nucl], axis=0), (nucl_idx, split_idx))
+    )
     if spin_symmetry:
-        nucl_h2m = nucl_h2m[:, :-1].at[:, -1].add(nucl_h2m[:, -1]) # sum both spins
         elec_h2m = elec_h2m.at[-n_dn:, -2:].set(elec_h2m[-n_dn:, (-1, -2)]) # switch spin
     nucl_one, elec_one = (
         jnp.concatenate(
             [h1_sec, h2m_sec.reshape(h1_sec.shape[0], -1)], 
             axis=-1) 
         for h1_sec, h2m_sec in 
-        zip(jnp.split(h1, [n_nucl], axis=0), (nucl_h2m, elec_h2m)))
+        zip(jnp.split(h1, [n_nucl], axis=0), (nucl_h2m, elec_h2m))
+    )
     # Global input
-    h1_mean = jnp.tile(jnp.stack(
+    h1_mean = jnp.stack(
         [
             h1_sec.mean(axis=0)
             for h1_sec in jnp.split(h1, split_idx, axis=0)
             if h1_sec.size > 0
-        ], axis=-2), (3, 1, 1)) # [3, n_sec, n_desc], 3 for (nucl, e_up, e_dn)
+        ], axis=-2)# [n_sec, n_desc]
+    elec_h1m = jnp.tile(h1_mean, (2,1,1)) # 2 for different spin
     if spin_symmetry:
-        h1_mean = h1_mean.at[-1, -2:].set(h1_mean[-1, (-1, -2)]) # switch spin
-    nucl_all, elec_all = jnp.split(
-        h1_mean.reshape(h1_mean.shape[0], -1), [1], axis=0)
+        nucl_all = jnp.concatenate([
+            h1_mean[:-2].reshape(-1),
+            (h1_mean[-2]*n_up + h1_mean[-1]*n_dn) / (n_up + n_dn)
+        ]).reshape(1, -1)
+        # switch spin
+        elec_all = elec_h1m.at[-1, -2:].set(h1_mean[(-1, -2),]).reshape(2, -1)
+    else:
+        nucl_all = h1_mean.reshape(1, -1)
+        elec_all = elec_h1m.reshape(2, -1)
     return nucl_one, nucl_all, elec_one, elec_all
 
 
@@ -129,7 +141,7 @@ class FermiLayer(nn.Module):
         else:
             pair_type = self._pair_type_idx()
             h2_new = jnp.zeros((n_particle, n_particle, self.pair_size), _t_real)
-            for pt in range(pair_type.max()):
+            for pt in range(pair_type.max()+1):
                 ptidx = (pair_type == pt) 
                 # doing different dense for different pair types
                 h2_new = h2_new.at[ptidx, :].set(
@@ -272,6 +284,7 @@ class FermiNet(FullWfn):
     full_det: bool = True
     activation: str = "gelu"
     rescale_residual: bool = True
+    type_embedding: int = 4
     jastrow_layers: int = 3
     spin_symmetry: bool = True
     identical_h2_update: bool = False
@@ -286,11 +299,15 @@ class FermiNet(FullWfn):
         split_sec = onp.asarray([*elem_sec, n_up, n_dn])
 
         h1, h2, dmat = raw_features(r, x)
-        type_embd = self.param("type_embedding", 
-            nn.initializers.normal(1.0), (len(split_sec), 4), _t_real)
-        h1 = jnp.concatenate([
-            h1, jnp.repeat(type_embd, split_sec, axis=0)
-        ], axis=1)
+        if self.type_embedding > 0:
+            repeat_sec = (onp.array([*elem_sec, n_elec])
+                          if self.spin_symmetry else split_sec)
+            type_embd = self.param("type_embedding", 
+                nn.initializers.normal(1.0), 
+                (len(repeat_sec), self.type_embedding), _t_real)
+            h1 = jnp.concatenate([
+                h1, jnp.repeat(type_embd, repeat_sec, axis=0)
+            ], axis=1)
 
         for ii, (sdim, pdim) in enumerate(self.hidden_dims):
             flayer = FermiLayer(
@@ -303,7 +320,7 @@ class FermiNet(FullWfn):
                 identical_h2_update=self.identical_h2_update
             )
             h1, h2 = flayer(h1, h2)
-        
+
         orbital_map = OrbitalMap((n_up, n_dn), self.determinants, 
                                  self.full_det, self.spin_symmetry)
         # tuple of [n_det, n_orb, n_orb]
