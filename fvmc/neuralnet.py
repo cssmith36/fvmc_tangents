@@ -284,13 +284,11 @@ class FermiNet(FullWfn):
 
         h1, h2, dmat = raw_features(r, x)
         if self.type_embedding > 0:
-            repeat_sec = (onp.array([*elem_sec, n_elec])
-                          if self.spin_symmetry else split_sec)
             type_embd = self.param("type_embedding", 
                 nn.initializers.normal(1.0), 
-                (len(repeat_sec), self.type_embedding), _t_real)
+                (len(split_sec), self.type_embedding), _t_real)
             h1 = jnp.concatenate([
-                h1, jnp.repeat(type_embd, repeat_sec, axis=0)
+                h1, jnp.repeat(type_embd, split_sec, axis=0)
             ], axis=1)
 
         for ii, (sdim, pdim) in enumerate(self.hidden_dims):

@@ -229,11 +229,11 @@ def run(step_fn, train_state, iterations, log_cfg):
         train_state, (mc_info, opt_info) = step_fn(train_state)
 
         if not jax.tree_util.tree_all(
-          jax.tree_map(lambda a: jnp.all(~jnp.isnan(a)), train_state)):
-            raise ValueError(f"NaN found in training state at step {ii} "
+          jax.tree_map(lambda a: jnp.all(~jnp.isnan(a)), train_state.params)):
+            raise ValueError(f"NaN found in params at step {ii} "
                              f"(log step {opt_info['step']-1})")
         if opt_info["aux"]["nans"] > 0:
-            LOGGER.warning("%d NaN found in local energy at step %d (log step %d)",
+            LOGGER.warning("%d NaN(s) found in local energy at step %d (log step %d)",
                            opt_info["aux"]["nans"], ii, opt_info['step']-1)
 
         # log stats
