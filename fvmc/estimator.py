@@ -122,26 +122,27 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
         eloc, sign, logf = batch_local(params, conf)
 
         # compute total energy
-        etot = paxis.all_mean(eloc.real)
+        etot = paxis.all_nanmean(eloc.real)
         # compute variance
-        var_e = paxis.all_mean(jnp.abs(eloc - etot)**2)
+        var_e = paxis.all_nanmean(jnp.abs(eloc - etot)**2)
         # form aux data dict, divide tot_w for correct gradient
-        aux = dict(e_tot = etot, var_e = var_e)
+        aux = dict(e_tot = etot, var_e = var_e, std_e = jnp.sqrt(var_e),
+                   nans = jnp.isnan(eloc).sum())
 
         # clipping the local energy (for making the loss)
         eclip = eloc
         if energy_clipping and energy_clipping > 0:
-            tv = paxis.all_mean(jnp.abs(eloc - etot).mean(-1))
+            tv = paxis.all_nanmean(jnp.abs(eloc - etot).mean(-1))
             eclip = clip_around(eloc, etot, energy_clipping * tv, stop_gradient=True)
         # make the conjugated term (with stopped gradient)
         eclip_c = lax.stop_gradient(eclip.conj())
         # shift the constant
         if grad_stablizing:
-            logf -= paxis.all_mean(logf)
+            logf -= paxis.all_nanmean(logf)
         kfac_jax.register_squared_error_loss(logf[:, None])
         e_diff = lax.stop_gradient(eclip_c - etot)
         # 2 * real for h.c.
-        loss = paxis.all_mean(2 * (logf * e_diff).real)
+        loss = paxis.all_nanmean(2 * (logf * e_diff).real)
         
         return loss, aux
 
@@ -201,18 +202,19 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
         rel_w, lshift = exp_shifted(2*logf.real - logsw, 
             normalize="mean", pmap_axis_name=paxis.name)
         # compute total energy
-        etot = paxis.all_average(eloc.real, rel_w)
+        etot = paxis.all_nanaverage(eloc.real, rel_w)
         # compute variance
-        var_e = paxis.all_average(jnp.abs(eloc - etot)**2, rel_w)
+        var_e = paxis.all_nanaverage(jnp.abs(eloc - etot)**2, rel_w)
         # form aux data dict, divide tot_w for correct gradient
         aux = dict(
-            e_tot = etot, var_e = var_e, _log_shift = lshift
+            e_tot = etot, var_e = var_e, std_e = jnp.sqrt(var_e),
+            nans = jnp.isnan(eloc).sum(), _log_shift = lshift
         )
 
         # clipping the local energy (for making the loss)
         eclip = eloc
         if energy_clipping and energy_clipping > 0:
-            tv = paxis.all_average(jnp.abs(eloc - etot).mean(-1), rel_w)
+            tv = paxis.all_nanaverage(jnp.abs(eloc - etot).mean(-1), rel_w)
             eclip = clip_around(eloc, etot, energy_clipping * tv, stop_gradient=True)
         # make the conjugated term (with stopped gradient)
         eclip_c, sign_c, logf_c = map(
@@ -222,12 +224,13 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
         log_psi2_rel = logf + logf_c - logsw
         rel_w_d = lax.stop_gradient(rel_w) # detached
         if grad_stablizing: # substract the averaged log psi (like baseline)
-            log_psi2_rel -= paxis.all_average(log_psi2_rel, rel_w_d)
+            log_psi2_rel -= paxis.all_nanaverage(log_psi2_rel, rel_w_d)
         psi_sqr = jnp.exp(log_psi2_rel - lshift)
         kfac_jax.register_squared_error_loss(psi_sqr[:, None])
         e_diff = lax.stop_gradient(eclip_c - etot)
         # 2 * real for h.c.
-        loss = paxis.all_mean(2 * (psi_sqr * e_diff).real) / paxis.all_mean(rel_w_d)
+        loss = (paxis.all_nansum(2 * (psi_sqr * e_diff).real) 
+                / paxis.all_nansum(~jnp.isnan(e_diff) * rel_w_d))
         
         return loss, aux
 

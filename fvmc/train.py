@@ -211,7 +211,7 @@ def run(step_fn, train_state, iterations, log_cfg):
     if jax.process_index() == 0:
         writer = SummaryWriter(log_cfg.stat_path)
     print_fields = {"step": "", 
-                    "e_tot": ".4f", "var_e": ".3e", 
+                    "e_tot": ".4f", "std_e": ".3e", 
                     "acc": ".2f", "lr": ".2e"} 
     printer = Printer(print_fields, time_format=".2f")
 
@@ -227,6 +227,14 @@ def run(step_fn, train_state, iterations, log_cfg):
 
         # main training loop
         train_state, (mc_info, opt_info) = step_fn(train_state)
+
+        if not jax.tree_util.tree_all(
+          jax.tree_map(lambda a: jnp.all(~jnp.isnan(a)), train_state)):
+            raise ValueError(f"NaN found in training state at step {ii} "
+                             f"(log step {opt_info['step']-1})")
+        if opt_info["aux"]["nans"] > 0:
+            LOGGER.warning("%d NaN found in local energy at step %d (log step %d)",
+                           opt_info["aux"]["nans"], ii, opt_info['step']-1)
 
         # log stats
         if ((ii % log_cfg.stat_every == 0 or ii == iterations-1) 

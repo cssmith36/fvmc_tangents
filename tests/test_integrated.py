@@ -28,7 +28,7 @@ def test_h2_kfac(tmp_path, capfd):
     cfg.optimize.iterations = 100
     cfg.optimize.loss.energy_clipping = 5.
     cfg.optimize.optimizer = 'kfac'
-    cfg.optimize.lr.base = 1e-4
+    cfg.optimize.lr.base = 3e-5
 
     os.chdir(tmp_path)
     train_state = fvmc.train.main(cfg)

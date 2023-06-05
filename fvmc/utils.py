@@ -417,8 +417,14 @@ class PmapAxis:
             pax_fn = getattr(self, f"p{nm}")
             all_fn = compose(pax_fn, jnp_fn)
             object.__setattr__(self, f"all_{nm}", all_fn)
+            nan_fn = getattr(jnp, f'nan{nm}')
+            allnan_fn = compose(pax_fn, nan_fn)
+            object.__setattr__(self, f"all_nan{nm}", allnan_fn)
         object.__setattr__(self, "all_average", 
             lambda a, w: self.all_mean(a * w) / self.all_mean(w))
+        object.__setattr__(self, "all_nanaverage", 
+            lambda a, w: self.all_nansum(a * w)
+                         / self.all_nansum(~jnp.isnan(a) * w))
 
 PAXIS = PmapAxis(PMAP_AXIS_NAME)
 
