@@ -49,46 +49,29 @@ def aggregate_features(h1, h2, split_sec, spin_symmetry):
     *elem_sec, n_up, n_dn = split_sec
     n_nucl = sum(elem_sec)
     split_idx = onp.cumsum(split_sec)[:-1]
-    # nucl may consider all the electrons the same with spin symmetry
-    nucl_idx = split_idx[:-1] if spin_symmetry else split_idx
     # Single input
-    nucl_h2m, elec_h2m = (
-        jnp.stack(
-            [
-                h2_sec.mean(axis=1)
-                for h2_sec in jnp.split(h2p, sidx, axis=1) 
-                if h2_sec.size > 0
-            ], axis=-2) # [n_nucl/elec, n_sec, n_desc]
-        for h2p, sidx in 
-        zip(jnp.split(h2, [n_nucl], axis=0), (nucl_idx, split_idx))
-    )
+    h2_mean = jnp.stack(
+        [
+            h2_sec.mean(axis=1)
+            for h2_sec in jnp.split(h2, split_idx, axis=1) 
+            if h2_sec.size > 0
+        ], axis=-2) # [n_particle, n_sec, n_desc]
     if spin_symmetry:
-        elec_h2m = elec_h2m.at[-n_dn:, -2:].set(elec_h2m[-n_dn:, (-1, -2)]) # switch spin
-    nucl_one, elec_one = (
-        jnp.concatenate(
-            [h1_sec, h2m_sec.reshape(h1_sec.shape[0], -1)], 
-            axis=-1) 
-        for h1_sec, h2m_sec in 
-        zip(jnp.split(h1, [n_nucl], axis=0), (nucl_h2m, elec_h2m))
-    )
+        h2_mean = h2_mean.at[-n_dn:, -2:].set(h2_mean[-n_dn:, (-1, -2)]) # switch spin
+    nucl_one, elec_one = jnp.split(
+        jnp.concatenate([h1, h2_mean.reshape(h1.shape[0], -1)], axis=-1),
+        [n_nucl], axis=0)
     # Global input
-    h1_mean = jnp.stack(
+    h1_mean = jnp.tile(jnp.stack(
         [
             h1_sec.mean(axis=0)
             for h1_sec in jnp.split(h1, split_idx, axis=0)
             if h1_sec.size > 0
-        ], axis=-2)# [n_sec, n_desc]
-    elec_h1m = jnp.tile(h1_mean, (2,1,1)) # 2 for different spin
+        ], axis=-2), (3, 1, 1)) # [3, n_sec, n_desc], 3 for (nucl, e_up, e_dn)
     if spin_symmetry:
-        nucl_all = jnp.concatenate([
-            h1_mean[:-2].reshape(-1),
-            (h1_mean[-2]*n_up + h1_mean[-1]*n_dn) / (n_up + n_dn)
-        ]).reshape(1, -1)
-        # switch spin
-        elec_all = elec_h1m.at[-1, -2:].set(h1_mean[(-1, -2),]).reshape(2, -1)
-    else:
-        nucl_all = h1_mean.reshape(1, -1)
-        elec_all = elec_h1m.reshape(2, -1)
+        h1_mean = h1_mean.at[-1, -2:].set(h1_mean[-1, (-1, -2)]) # switch spin
+    nucl_all, elec_all = jnp.split(
+        h1_mean.reshape(h1_mean.shape[0], -1), [1], axis=0)
     return nucl_one, nucl_all, elec_one, elec_all
 
 

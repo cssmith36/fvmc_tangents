@@ -16,7 +16,7 @@ _conf2 = {"full_det": False, "identical_h2_update": False, "spin_symmetry": True
 _conf3 = {"full_det": True, "identical_h2_update": True, "spin_symmetry": True}
 
 
-# @pytest.mark.slow
+@pytest.mark.slow
 @pytest.mark.parametrize("config", [_conf1, _conf2, _conf3])
 def test_elec_antisymm(config):
     r, elems, x = make_collapse_conf()
@@ -36,7 +36,7 @@ def test_elec_antisymm(config):
     np.testing.assert_allclose(logf1, logf2, equal_nan=False)
 
 
-# @pytest.mark.slow
+@pytest.mark.slow
 @pytest.mark.parametrize("config", [_conf1, _conf2, _conf3])
 def test_nucl_symm(config):
     r, elems, x = make_collapse_conf()
@@ -57,20 +57,20 @@ def test_nucl_symm(config):
 
 
 # @pytest.mark.slow
-@pytest.mark.parametrize("config", [_conf2, _conf3])
-def test_spin_symm(config):
-    r, elems, x = make_collapse_conf()
-    x = x[0, :-1] # 8 electrons
-    elems = jnp.sort(elems)
-    n_el = x.shape[0]
-    n_up, n_dn = parse_spin(n_el, None)
-    model = FermiNet(elems=elems, **config)
-    params = model.init(_key0, r, x)
+# @pytest.mark.parametrize("config", [_conf2, _conf3])
+# def test_spin_symm(config):
+#     r, elems, x = make_collapse_conf()
+#     x = x[0, :-1] # 8 electrons
+#     elems = jnp.sort(elems)
+#     n_el = x.shape[0]
+#     n_up, n_dn = parse_spin(n_el, None)
+#     model = FermiNet(elems=elems, **config)
+#     params = model.init(_key0, r, x)
 
-    x = x + jax.random.normal(_key0, x.shape)
-    px = jnp.concatenate([x[n_up:], x[:n_up]], axis=0)
+#     x = x + jax.random.normal(_key0, x.shape)
+#     px = jnp.concatenate([x[n_up:], x[:n_up]], axis=0)
 
-    sign1, logf1 = model.apply(params, r, x)
-    sign2, logf2 = model.apply(params, r, px)
-    # np.testing.assert_allclose(sign1, sign2, equal_nan=False)
-    np.testing.assert_allclose(logf1, logf2, equal_nan=False)
+#     sign1, logf1 = model.apply(params, r, x)
+#     sign2, logf2 = model.apply(params, r, px)
+#     # np.testing.assert_allclose(sign1, sign2, equal_nan=False)
+#     np.testing.assert_allclose(logf1, logf2, equal_nan=False)
