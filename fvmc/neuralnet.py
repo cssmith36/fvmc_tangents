@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import numpy as onp
 
 from .utils import (Array, _t_real, adaptive_residual, build_mlp,
-                    diffmat, fix_init, log_linear_exp, parse_activation,
+                    displace_matrix, fix_init, log_linear_exp, parse_activation,
                     parse_spin, collect_elems)
 from .wavefunction import FullWfn
 
@@ -27,15 +27,15 @@ def raw_features(r, x):
     # initial h1 is empty, trick to avoid error in kfac
     h1 = pos[:, :1] * 0
     # pair distances
-    diff = diffmat(pos, pos)
+    disp = displace_matrix(pos, pos)
     dist = jnp.linalg.norm(
-        diff + jnp.eye(n_particle)[..., None],
+        disp + jnp.eye(n_particle)[..., None],
         keepdims=True,
         axis=-1
     )
     h2_scaling = jnp.log(1 + dist) / dist
     dmat = jnp.concatenate([
-        diff, 
+        disp, 
         dist * (1.0 - jnp.eye(n_particle)[..., None])
     ], axis=-1)
     h2 = dmat * h2_scaling # [n_p, n_p, 4]

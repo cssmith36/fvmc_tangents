@@ -8,7 +8,7 @@ from jax import numpy as jnp
 
 from fvmc.utils import Array
 
-from .utils import (Array, _t_real, build_mlp, cdist, diffmat, fix_init,
+from .utils import (Array, _t_real, build_mlp, cdist, displace_matrix, fix_init,
                     parse_spin, pdist)
 
 
@@ -135,9 +135,9 @@ class SimpleOrbital(nn.Module):
             [n_feature]*self.n_hidden + [self.n_orb], 
             residual=True, activation=self.activation, param_dtype=_t_real)
         # build input features
-        diff_ei = diffmat(x, r) # [..., n_el, n_ion, 3]
-        d_ei = jnp.linalg.norm(diff_ei, axis=-1, keepdims=True) # [..., n_el, n_ion, 1]
-        feature = jnp.concatenate([diff_ei, d_ei], axis=-1) # [..., n_el, n_ion, 4]
+        disp_ei = displace_matrix(x, r) # [..., n_el, n_ion, 3]
+        d_ei = jnp.linalg.norm(disp_ei, axis=-1, keepdims=True) # [..., n_el, n_ion, 1]
+        feature = jnp.concatenate([disp_ei, d_ei], axis=-1) # [..., n_el, n_ion, 4]
         feature = feature.reshape(*feature.shape[:-2], n_feature) # [..., n_el, (n_ion * 4)]
         # return the result from MLP
         return resnet(feature) # [..., n_el, n_orb]

@@ -85,19 +85,19 @@ def cmult(x1, x2):
         + 1j * (x1.imag * x2.real + x1.real * x2.imag))
 
 
-def diffmat(xa, xb):
+def displace_matrix(xa, xb):
     return jnp.expand_dims(xa, -2) - jnp.expand_dims(xb, -3)
 
 def pdist(x):
     # x is assumed to have dimension [..., n, 3]
     n = x.shape[-2]
-    diff = diffmat(x, x)
-    diff_padded = diff + jnp.eye(n)[..., None]
-    dist = jnp.linalg.norm(diff_padded, axis=-1) * (1 - jnp.eye(n))
+    disp = displace_matrix(x, x)
+    disp_padded = disp + jnp.eye(n)[..., None]
+    dist = jnp.linalg.norm(disp_padded, axis=-1) * (1 - jnp.eye(n))
     return dist
 
 def cdist(xa, xb):
-    diff = diffmat(xa, xb)
+    diff = displace_matrix(xa, xb)
     dist = jnp.linalg.norm(diff, axis=-1)
     return dist
 
