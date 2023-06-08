@@ -62,9 +62,18 @@ def test_ewaldsum_simple(conf):
 @pytest.mark.parametrize("conf", [_get_NaCl_conf, _get_NaCl_conf1, _get_CaF2_conf])
 def test_ewaldsum_transinv(conf):
     latvec, charge, pos, answer = conf()
-    shift_vec = jax.random.normal(_key0, shape=(100, 1, 3))
+    shift_vec = jax.random.normal(_key0, shape=(100, 1, 3)) * 5.
     shifted_pos = pos + shift_vec # [n_batch, n_particle, 3]
     ewald = EwaldSum(latvec)
     e_raw = ewald.energy(charge, pos)
     e_shifted = jax.vmap(ewald.energy, in_axes=(None, 0))(charge, shifted_pos)
-    np.testing.assert_allclose(*jnp.broadcast_arrays(e_raw, e_shifted))
+    np.testing.assert_allclose(*jnp.broadcast_arrays(e_raw, e_shifted), rtol=1e-10)
+
+
+@pytest.mark.slow
+def test_ewaldsum_calc_pe():
+    latvec, charge, pos, answer = _get_NaCl_conf1()
+    elems = charge[:4]
+    r, x = jnp.split(pos, [4], axis=0)
+    ewald = EwaldSum(latvec)
+    np.testing.assert_allclose(ewald.calc_pe(elems, r, x), answer, rtol=1e-5)

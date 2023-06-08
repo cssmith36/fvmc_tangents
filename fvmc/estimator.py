@@ -5,7 +5,8 @@ import kfac_jax
 from jax import lax
 from jax import numpy as jnp
 
-from .hamiltonian import calc_local_energy
+from .ewaldsum import EwaldSum
+from .hamiltonian import calc_ke_elec, calc_ke_full, get_nuclei_mass, calc_pe
 from .utils import PMAP_AXIS_NAME, PmapAxis, ith_output, exp_shifted
 
 
@@ -17,7 +18,7 @@ def clip_around(a, target, half_range, stop_gradient=True):
     return jnp.clip(a, c_min, c_max)
 
 
-def build_eval_local_elec(model, elems, nuclei):
+def build_eval_local_elec(model, elems, nuclei, cell=None):
     """create a function that evaluates local energy, sign and log abs of wavefunction.
     
     Args:
@@ -25,28 +26,34 @@ def build_eval_local_elec(model, elems, nuclei):
             `model.apply` should have signature (params, x) -> (sign(f(x)), log|f(x)|)
         nuclei (Array): the position of nuclei.
         elems (Array): the element indices (charges) of those nuclei.
+        cell (Optional Array): if not None, using ewald summation for potential energy in PBC
 
     Returns:
         Callable with signature (params, x) -> (eloc, sign, logf) that evaluates 
         local energy, sign and log abs of wavefunctions on given parameters and configurations.
     """
+    
+    calc_pe_adapt = EwaldSum(cell).calc_pe if cell is not None else calc_pe
 
     def eval_local(params, x):
         log_psi_abs = ith_output(partial(model.apply, params), 1)
-        eloc = calc_local_energy(log_psi_abs, elems, nuclei, x)
+        ke = calc_ke_elec(log_psi_abs, x)
+        pe = calc_pe_adapt(elems, nuclei, x)
+        eloc = ke + pe
         sign, logf = model.apply(params, x)
         return eloc, sign, logf
 
     return eval_local
 
 
-def build_eval_local_full(model, elems):
+def build_eval_local_full(model, elems, cell=None):
     """create a function that evaluates local energy, sign and log abs of full wavefunction.
     
     Args:
         model (nn.Module): a flax module that calculates the sign and log abs of wavefunction.
             `model.apply` should have signature (params, r, x) -> (sign(f), log|f|)
         elems (Array): the element indices (charges) of nuclei (corresponding to `r`).
+        cell (Optional Array): if not None, using ewald summation for potential energy in PBC
 
     Returns:
         Callable with signature (params, conf) -> (eloc, sign, logf) that evaluates 
@@ -54,10 +61,15 @@ def build_eval_local_full(model, elems):
         `conf` here is a tuple of (r, x) contains nuclei (r) and electron (x) positions.
     """
 
+    calc_pe_adapt = EwaldSum(cell).calc_pe if cell is not None else calc_pe
+    mass = get_nuclei_mass(elems)
+
     def eval_local(params, conf):
         r, x = conf
         log_psi_abs = ith_output(partial(model.apply, params), 1)
-        eloc = calc_local_energy(log_psi_abs, elems, r, x, nuclei_ke=True)
+        ke = calc_ke_full(log_psi_abs, mass, r, x)
+        pe = calc_pe_adapt(elems, r, x)
+        eloc = ke + pe
         sign, logf = model.apply(params, r, x)
         return eloc, sign, logf
 

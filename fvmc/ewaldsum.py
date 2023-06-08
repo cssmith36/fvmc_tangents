@@ -46,10 +46,10 @@ class EwaldSum:
         pbc displace function, lattice displacements, and reciporcal g points
 
         Args:
-            latvec: Array. 3x3 matrix with each row a lattice vector 
-            g_max: int. How far to take reciprocal sum; probably never needs to be changed.
-            n_lat: int. How far to take real-space sum; probably never needs to be changed.
-            g_threshold: float. ignore g points below this value. Following DeepSolid value. 
+            latvec (Array): 3x3 matrix with each row a lattice vector 
+            g_max (int): How far to take reciprocal sum; probably never needs to be changed.
+            n_lat (int): How far to take real-space sum; probably never needs to be changed.
+            g_threshold (float): ignore g points below this value. Following DeepSolid value. 
         """
         self.latvec = jnp.asarray(latvec)
         self.recvec = jnp.linalg.inv(latvec).T
@@ -64,8 +64,9 @@ class EwaldSum:
         # genetate g points to be used in reciprocal sum. Keep only large gweights
         raw_gpoints = gen_positive_gpoints(self.recvec, g_max)
         raw_gweight = calc_gweight(raw_gpoints, self.cellvolume, self.alpha)
-        self.gpoints = raw_gpoints[raw_gweight > g_threshold]
-        self.gweight = raw_gweight[raw_gweight > g_threshold]
+        selected_gidx = raw_gweight > g_threshold
+        self.gpoints = raw_gpoints[selected_gidx]
+        self.gweight = raw_gweight[selected_gidx]
 
     def const_part(self, charge):
         q_sum = jnp.sum(charge)
@@ -92,9 +93,18 @@ class EwaldSum:
         return e_recip
     
     def energy(self, charge, pos):
+        """Calculation the Coulomb energy from point charges and their positions"""
         return (self.const_part(charge) 
                 + self.real_part(charge, pos) 
                 + self.recip_part(charge, pos))
+    
+    def calc_pe(self, elems, r, x):
+        """Warpped interface for potential energy from nuclei and electrons"""
+        assert elems.shape[0] == r.shape[0]
+        assert elems.ndim == 1 and r.ndim == x.ndim == 2
+        charge = jnp.concatenate([elems, -jnp.ones(x.shape[0])], axis=0)
+        pos = jnp.concatenate([r, x], axis=0)
+        return self.energy(charge, pos)
 
 
 def gen_pbc_disp_fn(latvec):
@@ -122,31 +132,25 @@ def gen_pbc_disp_fn(latvec):
 
 
 def gen_lattice_displacements(latvec, n_lat):
-    XYZ = jnp.meshgrid(*[jnp.arange(-n_lat, n_lat + 1)] * 3, indexing="ij")
-    xyz = jnp.stack(XYZ, axis=-1).reshape((-1, 3))
+    ndim = latvec.shape[0]
+    XYZ = jnp.meshgrid(*[jnp.arange(-n_lat, n_lat + 1)] * ndim, indexing="ij")
+    xyz = jnp.stack(XYZ, axis=-1).reshape((-1, ndim))
     return jnp.asarray(jnp.dot(xyz, latvec))
 
 
 def gen_positive_gpoints(recvec, g_max):
     # Determine G points to include in reciprocal Ewald sum
-    gptsXpos = jnp.meshgrid(
-        jnp.arange(1, g_max + 1),
-        *[jnp.arange(-g_max, g_max + 1)] * 2,
-        indexing="ij"
-    )
+    ndim = recvec.shape[0]
     zero = jnp.asarray([0])
-    gptsX0Ypos = jnp.meshgrid(
-        zero,
-        jnp.arange(1, g_max + 1),
-        jnp.arange(-g_max, g_max + 1),
-        indexing="ij",
-    )
-    gptsX0Y0Zpos = jnp.meshgrid(
-        zero, zero, jnp.arange(1, g_max + 1), indexing="ij"
-    )
+    half = jnp.arange(1, g_max + 1)
+    full = jnp.arange(-g_max, g_max + 1)
+    gpts_list = [jnp.meshgrid(
+        *([zero]*ii + [half] + [full]*(ndim-ii-1)),
+        indexing='ij'
+    ) for ii in range(ndim)]
     gpts = jnp.concatenate([
-        jnp.stack(g, axis=-1).reshape(-1, 3) 
-        for g in (gptsXpos, gptsX0Ypos, gptsX0Y0Zpos)
+        jnp.stack(g, axis=-1).reshape(-1, ndim) 
+        for g in gpts_list
     ], axis=0)
     gpoints = 2 * jnp.pi * gpts @ recvec
     return gpoints
@@ -157,12 +161,3 @@ def calc_gweight(gpoints, cellvolume, alpha):
     gweight = 4 * jnp.pi * jnp.exp(-gsquared / (4 * alpha ** 2))
     gweight /= cellvolume * gsquared
     return gweight
-
-
-def select_big(gpts, cellvolume, recvec, alpha):
-    gpoints = jnp.einsum("j...,jk->...k", gpts, recvec) * 2 * jnp.pi
-    gsquared = jnp.einsum("...k,...k->...", gpoints, gpoints)
-    gweight = 4 * jnp.pi * jnp.exp(-gsquared / (4 * alpha ** 2))
-    gweight /= cellvolume * gsquared
-    bigweight = gweight > 1e-12
-    return gpoints[bigweight], gweight[bigweight]

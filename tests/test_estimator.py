@@ -31,11 +31,14 @@ def make_dummy_model(apply_fn):
     return model
 
 
-def test_eval_local_shape():
+@pytest.mark.parametrize("pbc", [False, True])
+def test_eval_local_shape(pbc):
     f, logf = make_test_log_f()
     model = make_dummy_model(get_sign_log(f))
     nuclei, elems = make_test_ions()
-    eval_local = build_eval_local_elec(model, elems, nuclei)
+    ndim = nuclei.shape[-1]
+    cell = jnp.eye(ndim) * 10 if pbc else None
+    eval_local = build_eval_local_elec(model, elems, nuclei, cell)
     
     a = None
     x = make_test_x()
@@ -47,11 +50,14 @@ def test_eval_local_shape():
     assert beloc.shape == bsign.shape == blogf.shape == (3,)
 
 
-def test_eval_local_full_shape():
+@pytest.mark.parametrize("pbc", [False, True])
+def test_eval_local_full_shape(pbc):
     f, logf = make_test_log_f()
     model = make_dummy_model(get_sign_log(f, dummy_r=True))
     r, elems = make_test_ions()
-    eval_local = build_eval_local_full(model, elems)
+    ndim = r.shape[-1]
+    cell = jnp.eye(ndim) * 10 if pbc else None
+    eval_local = build_eval_local_full(model, elems, cell)
     
     a = None
     x = make_test_x()
@@ -97,8 +103,8 @@ def test_eval_total(clipping, weighted):
         (clipped_local_energies - target_energy) * log_psi_grad_a
     )
     
-    eval_total = (build_eval_total_weighted if weighted
-                  else build_eval_total)(eval_local, clipping,)
+    eval_total = build_eval_total(eval_local, clipping, 
+                    grad_stablizing=False, use_weighted=weighted)
     eval_total_grad = jax.value_and_grad(eval_total, has_aux=True)
 
     # loss, aux = eval_total(a, (x, log_sample))

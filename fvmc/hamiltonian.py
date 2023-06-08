@@ -6,7 +6,7 @@ from jax.flatten_util import ravel_pytree
 from .utils import pdist, cdist
 
 
-def calc_coulomb(pos, charge):
+def calc_coulomb(charge, pos):
     n = pos.shape[-2]
     dist = pdist(pos)
     charge =jnp.atleast_1d(charge)
@@ -15,7 +15,7 @@ def calc_coulomb(pos, charge):
     return coulomb.sum((-1,-2))
 
 
-def calc_coulomb_2(pos_a, charge_a, pos_b, charge_b):
+def calc_coulomb_2(charge_a, pos_a, charge_b, pos_b):
     dist = cdist(pos_a, pos_b)
     charge_a, charge_b = map(jnp.atleast_1d, [charge_a, charge_b])
     cmat = jnp.expand_dims(charge_a, -1) * jnp.expand_dims(charge_b, -2)
@@ -26,9 +26,9 @@ def calc_coulomb_2(pos_a, charge_a, pos_b, charge_b):
 def calc_pe(elems, r, x):
     # r is nuclei position
     # x is electron positions
-    el_el = calc_coulomb(x, -1)
-    el_ion = calc_coulomb_2(x, -1, r, elems)
-    ion_ion = calc_coulomb(r, elems)
+    el_el = calc_coulomb(-1, x)
+    el_ion = calc_coulomb_2(-1, x, elems, r)
+    ion_ion = calc_coulomb(elems, r)
     return el_el + el_ion + ion_ion
 
 
@@ -61,6 +61,13 @@ def calc_ke_elec(log_psi, x):
         raise ValueError(f"only support x with ndim equals 2 or 3, get {x.ndim}")
     
     return -0.5 * lapl_fn(x)
+
+
+def get_nuclei_mass(elems):
+    from .utils import PROTON_MASS, ISOTOPE_MAIN
+    # neutrons are treated as 1
+    mass = PROTON_MASS * jnp.asarray(ISOTOPE_MAIN)[elems.astype(int)]
+    return mass
 
 
 def calc_ke_full(log_psi, mass, r, x):
@@ -98,14 +105,18 @@ def calc_ke_full(log_psi, mass, r, x):
     return -0.5 * lapl_fn(r, x)
 
 
-def calc_local_energy(log_psi, elems, r, x, nuclei_ke=False):
+def calc_local_energy(log_psi, elems, r, x, cell=None, nuclei_ke=False):
+    # do not use this one directly in QMC with a fixed cell. 
+    # It's slow as it will rebuild the g points every time.
     if nuclei_ke:
-        from .utils import PROTON_MASS, ISOTOPE_MAIN
-        # neutrons are treated as 1
-        mass = PROTON_MASS * jnp.asarray(ISOTOPE_MAIN)[elems.astype(int)]
+        mass = get_nuclei_mass(elems)
         ke = calc_ke_full(log_psi, mass, r, x)
     else:
         ke = calc_ke_elec(log_psi, x) 
-    pe = calc_pe(elems, r, x)
+    if cell is not None:
+        from .ewaldsum import EwaldSum
+        pe = EwaldSum(cell).calc_pe(elems, r, x)
+    else:
+        pe = calc_pe(elems, r, x)
     return ke + pe
     
