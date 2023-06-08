@@ -85,20 +85,23 @@ def cmult(x1, x2):
         + 1j * (x1.imag * x2.real + x1.real * x2.imag))
 
 
-def displace_matrix(xa, xb):
-    return jnp.expand_dims(xa, -2) - jnp.expand_dims(xb, -3)
+def displace_matrix(xa, xb, disp_fn=None):
+    if disp_fn is None:
+        return jnp.expand_dims(xa, -2) - jnp.expand_dims(xb, -3)
+    else:
+        return jax.vmap(jax.vmap(disp_fn, (None, 0)), (0, None))(xa, xb)
 
-def pdist(x):
+def pdist(x, disp_fn=None):
     # x is assumed to have dimension [..., n, 3]
     n = x.shape[-2]
-    disp = displace_matrix(x, x)
+    disp = displace_matrix(x, x, disp_fn)
     disp_padded = disp + jnp.eye(n)[..., None]
     dist = jnp.linalg.norm(disp_padded, axis=-1) * (1 - jnp.eye(n))
     return dist
 
-def cdist(xa, xb):
-    diff = displace_matrix(xa, xb)
-    dist = jnp.linalg.norm(diff, axis=-1)
+def cdist(xa, xb, disp_fn=None):
+    disp = displace_matrix(xa, xb, disp_fn)
+    dist = jnp.linalg.norm(disp, axis=-1)
     return dist
 
 
