@@ -361,7 +361,8 @@ def build_mlp(
     **dense_kwargs
 ) -> Serial:
     layers = [nn.Dense(ls, **dense_kwargs) for ls in layer_sizes]
-    return Serial(layers, residual=residual, activation=activation)
+    return Serial(layers, 
+                  residual=residual, activation=activation, rescale=rescale)
 
 
 class Printer:
