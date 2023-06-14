@@ -74,7 +74,8 @@ def test_orbital_shape():
 def test_slater_antisymm(full_det, spin):
     nuclei, elems, x = make_collapse_conf()
     n_batch, n_el = x.shape[:-1]
-    slater = SimpleSlater(spin=spin, full_det=full_det, 
+    spins = (n_el // 2, n_el - n_el // 2)
+    slater = SimpleSlater(spins=spins, full_det=full_det, 
                           orbital_args={"n_hidden": 1})
     params = slater.init(_key0, nuclei, x)
 
@@ -93,9 +94,10 @@ def test_jastrow_slater():
     nuclei, elems, x = make_collapse_conf()
     x = x[0]
     n_el = x.shape[0]
+    spins = (n_el // 2, n_el - n_el // 2)
     model = FixNuclei(
         build_jastrow_slater(
-            elems, nuclei, None, full_det=True, orbital_args={"n_hidden": 1}),
+            elems, spins, nuclei, full_det=True, orbital_args={"n_hidden": 1}),
         nuclei=nuclei)
     params = model.init(_key0, x)
     subp0 = {"params": params["params"]['model']["submodels_0"]}

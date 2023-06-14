@@ -96,9 +96,9 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         ansatz = ansatz_cfg
     else:
         ansatz_cfg = ConfigDict(ansatz_cfg)
-        # ansatz = build_jastrow_slater(elems, nuclei, spin, 
+        # ansatz = build_jastrow_slater(elems, n_elec, nuclei,
         #     dynamic_nuclei=fully_quantum, **ansatz_cfg)
-        ansatz = FermiNet(elems=elems, spin=spin, **ansatz_cfg)
+        ansatz = FermiNet(elems=elems, spins=n_elec, **ansatz_cfg)
         if fully_quantum:
             ansatz = ProductModel([ansatz, NucleiGaussianSlater(nuclei, 0.1)])
         else:

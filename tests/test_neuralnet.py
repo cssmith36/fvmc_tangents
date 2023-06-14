@@ -23,7 +23,8 @@ def test_elec_antisymm(config):
     x = x[0]
     elems = jnp.sort(elems)
     n_el = x.shape[0]
-    model = FermiNet(elems=elems, **config)
+    spins = parse_spin(n_el, None)
+    model = FermiNet(elems=elems, spins=spins, **config)
     params = model.init(_key0, r, x)
 
     x = x + jax.random.normal(_key0, x.shape)
@@ -43,7 +44,9 @@ def test_nucl_symm(config):
     x = x[0]
     elems = jnp.sort(elems)
     n_nucl = r.shape[0]
-    model = FermiNet(elems=elems, **config)
+    n_el = x.shape[0]
+    spins = parse_spin(n_el, None)
+    model = FermiNet(elems=elems, spins=spins, **config)
     params = model.init(_key0, r, x)
 
     x = x + jax.random.normal(_key0, x.shape)

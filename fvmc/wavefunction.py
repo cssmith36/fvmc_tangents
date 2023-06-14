@@ -151,7 +151,7 @@ class SimpleSlater(FullWfn):
     Return sign and log of determinant when called.
     """
 
-    spin: Optional[int] = None # difference between alpha and beta spin
+    spins: tuple[int, int] # difference between alpha and beta spin
     full_det: bool = True
     orbital_type: str = "simple"
     orbital_args: dict = _field(default_factory=dict)
@@ -159,7 +159,8 @@ class SimpleSlater(FullWfn):
     @nn.compact
     def __call__(self, r: Array, x: Array) -> Tuple[Array, Array]:
         n_el = x.shape[-2]
-        n_up, n_dn = parse_spin(n_el, self.spin)
+        n_up, n_dn = self.spins
+        assert n_up + n_dn == n_el
         
         if self.orbital_type == "simple":
             OrbCls = SimpleOrbital
@@ -219,11 +220,11 @@ class NucleiGaussianSlater(FullWfn):
         return jnp.linalg.slogdet(exps)
 
 
-def build_jastrow_slater(elems, nuclei, spin=None, dynamic_nuclei=False,
+def build_jastrow_slater(elems, spins, nuclei, dynamic_nuclei=False,
         full_det=True, orbital_type="simple", orbital_args=None):
     orbital_args = orbital_args or {}
     jastrow = SimpleJastrow(elems)
-    slater = SimpleSlater(spin, full_det, orbital_type, orbital_args)
+    slater = SimpleSlater(spins, full_det, orbital_type, orbital_args)
     mlist = [jastrow, slater]
     if dynamic_nuclei:
         mlist.append(NucleiGaussianSlater(nuclei, 0.1))

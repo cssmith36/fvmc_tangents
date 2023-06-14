@@ -187,7 +187,7 @@ class IsotropicEnvelope(nn.Module):
     
 
 class OrbitalMap(nn.Module):
-    n_elec: Tuple[int, int]
+    spins: Tuple[int, int]
     determinants: int
     full_det: bool = True
     share_weights: bool = False
@@ -196,7 +196,7 @@ class OrbitalMap(nn.Module):
     def __call__(self, h1, d_ei):
         # h_one is [n_nucl+n_elec, n_desc]
         # d_ei is [n_elec, n_nucl, 1]
-        n_up, n_dn = self.n_elec
+        n_up, n_dn = self.spins
         n_el, n_nu = d_ei.shape[:-1]
         assert n_up + n_dn == n_el
         n_det = self.determinants
@@ -214,26 +214,26 @@ class OrbitalMap(nn.Module):
         h1_nucl, h1_elec = jnp.split(h1, [n_nu])
 
         if self.share_weights:
-            uu, dd = jnp.split(orbital_fn(h1_elec, h1_nucl, d_ei, max(self.n_elec)), 
-                               self.n_elec[:1], axis=0)
+            uu, dd = jnp.split(orbital_fn(h1_elec, h1_nucl, d_ei, max(self.spins)), 
+                               self.spins[:1], axis=0)
             if self.full_det:
-                ud, du = jnp.split(orbital_fn(h1_elec, h1_nucl, d_ei, max(self.n_elec)), 
-                                   self.n_elec[:1], axis=0)
+                ud, du = jnp.split(orbital_fn(h1_elec, h1_nucl, d_ei, max(self.spins)), 
+                                   self.spins[:1], axis=0)
                 orbitals = (jnp.concatenate([
-                    jnp.concatenate([uu[:, :self.n_elec[0]], ud[:, :self.n_elec[1]]], axis=1),
-                    jnp.concatenate([du[:, :self.n_elec[0]], dd[:, :self.n_elec[1]]], axis=1),
+                    jnp.concatenate([uu[:, :self.spins[0]], ud[:, :self.spins[1]]], axis=1),
+                    jnp.concatenate([du[:, :self.spins[0]], dd[:, :self.spins[1]]], axis=1),
                 ], axis=0),)
             else:
-                orbitals = (uu[:, :self.n_elec[0]], dd[:, :self.n_elec[1]])
+                orbitals = (uu[:, :self.spins[0]], dd[:, :self.spins[1]])
         else:
-            h_by_spin = jnp.split(h1_elec, self.n_elec[:1], axis=0)
-            d_by_spin = jnp.split(d_ei, self.n_elec[:1], axis=0)
+            h_by_spin = jnp.split(h1_elec, self.spins[:1], axis=0)
+            d_by_spin = jnp.split(d_ei, self.spins[:1], axis=0)
             orbitals = tuple(
                 orbital_fn(h, h1_nucl, d, no)
                 for h, d, no in zip(
                     h_by_spin,
                     d_by_spin,
-                    (sum(self.n_elec),)*2 if self.full_det else self.n_elec)
+                    (sum(self.spins),)*2 if self.full_det else self.spins)
                 )
             if self.full_det:
                 orbitals = (jnp.concatenate(orbitals, axis=0),)
@@ -241,7 +241,7 @@ class OrbitalMap(nn.Module):
 
 
 class ElectronCusp(nn.Module):
-    n_elec: tuple[int, int]
+    spins: tuple[int, int]
     
     @nn.compact
     def __call__(self, d_ee: Array) -> Array:
@@ -250,8 +250,8 @@ class ElectronCusp(nn.Module):
         d_ee = jnp.atleast_3d(d_ee)[..., -1]
         uu, ud, du, dd = [
             s
-            for split in jnp.split(d_ee, self.n_elec[:1], axis=0)
-            for s in jnp.split(split, self.n_elec[:1], axis=1)
+            for split in jnp.split(d_ee, self.spins[:1], axis=0)
+            for s in jnp.split(split, self.spins[:1], axis=1)
         ]
         same = jnp.concatenate([uu.reshape(-1), dd.reshape(-1)])
         diff = jnp.concatenate([ud.reshape(-1), du.reshape(-1)])
@@ -262,7 +262,7 @@ class ElectronCusp(nn.Module):
 
 class FermiNet(FullWfn):
     elems: Sequence[int]
-    spin: int = None
+    spins: tuple[int, int]
     hidden_dims: Sequence[Tuple[int, int]] = ((64, 16),)*4
     determinants: int = 16
     full_det: bool = True
@@ -278,8 +278,9 @@ class FermiNet(FullWfn):
         n_elec = x.shape[-2]
         n_nucl = r.shape[-2]
         _, elem_sec = collect_elems(self.elems)
-        n_up, n_dn = parse_spin(n_elec, self.spin)
+        n_up, n_dn = self.spins
         assert sum(elem_sec) == n_nucl
+        assert n_up + n_dn == n_elec
         split_sec = onp.asarray([*elem_sec, n_up, n_dn])
 
         h1, h2, dmat = raw_features(r, x)
