@@ -1,6 +1,4 @@
-import functools
-from dataclasses import field
-from typing import Any, Optional, Sequence, Tuple
+from typing import Sequence, Tuple
 
 import flax.linen as nn
 import jax
@@ -8,8 +6,8 @@ import jax.numpy as jnp
 import numpy as onp
 
 from .utils import (Array, _t_real, adaptive_residual, build_mlp,
-                    displace_matrix, fix_init, log_linear_exp, parse_activation,
-                    parse_spin, collect_elems)
+                    collect_elems, displace_matrix, fix_init, log_linear_exp,
+                    parse_activation)
 from .wavefunction import FullWfn
 
 # for all functions, we use the following convention:
@@ -155,17 +153,16 @@ class FermiLayer(nn.Module):
 
 
 class IsotropicEnvelope(nn.Module):
-    out_size: int
-    determinants: int
+    n_out: int
     softplus: bool = True
 
     @nn.compact
     def __call__(self, h1, d_ei): 
         assert d_ei.ndim <= 3
-        d_ei = jnp.atleast_3d(d_ei)[:, :, -1:, None] # [n_elec, n_nucl, 1, 1]
+        d_ei = jnp.atleast_3d(d_ei)[:, :, -1:] # [n_elec, n_nucl, 1]
         n_nucl = d_ei.shape[1]
-        n_out = self.out_size * self.determinants
-        pshape = (n_nucl, self.out_size, self.determinants)
+        n_out = self.n_out
+        pshape = (n_nucl, n_out)
         kernel_init = nn.initializers.variance_scaling(
             0.01, 'fan_in', 'truncated_normal')
         sigma = nn.Dense(
@@ -205,10 +202,11 @@ class OrbitalMap(nn.Module):
         def orbital_fn(h1_el, h1_nu, d_ei, n_orb):
             n_param = n_orb * n_det
             dense = nn.Dense(n_param, param_dtype=_t_real)
-            envelope = IsotropicEnvelope(n_orb, self.determinants)
-            assert envelope.out_size == n_orb
+            envelope = IsotropicEnvelope(n_orb * n_det)
+            assert envelope.n_out == n_orb * n_det
             # Actual orbital function
-            return dense(h1_el).reshape(-1, n_orb, n_det) * envelope(h1_nu, d_ei) 
+            return (dense(h1_el).reshape(-1, n_orb, n_det) 
+                    * envelope(h1_nu, d_ei).reshape(-1, n_orb, n_det))
 
         # Case destinction for weight sharing 
         h1_nucl, h1_elec = jnp.split(h1, [n_nu])

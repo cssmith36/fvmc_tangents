@@ -132,24 +132,24 @@ def gen_pbc_disp_fn(latvec):
 
 
 def gen_lattice_displacements(latvec, n_lat):
-    ndim = latvec.shape[0]
-    XYZ = jnp.meshgrid(*[jnp.arange(-n_lat, n_lat + 1)] * ndim, indexing="ij")
-    xyz = jnp.stack(XYZ, axis=-1).reshape((-1, ndim))
+    n_d = latvec.shape[0] # number of spacial dimension
+    XYZ = jnp.meshgrid(*[jnp.arange(-n_lat, n_lat + 1)] * n_d, indexing="ij")
+    xyz = jnp.stack(XYZ, axis=-1).reshape((-1, n_d))
     return jnp.asarray(jnp.dot(xyz, latvec))
 
 
 def gen_positive_gpoints(recvec, g_max):
     # Determine G points to include in reciprocal Ewald sum
-    ndim = recvec.shape[0]
+    n_d = recvec.shape[0] # number of spacial dimension
     zero = jnp.asarray([0])
     half = jnp.arange(1, g_max + 1)
     full = jnp.arange(-g_max, g_max + 1)
     gpts_list = [jnp.meshgrid(
-        *([zero]*ii + [half] + [full]*(ndim-ii-1)),
+        *([zero]*ii + [half] + [full]*(n_d-ii-1)),
         indexing='ij'
-    ) for ii in range(ndim)]
+    ) for ii in range(n_d)]
     gpts = jnp.concatenate([
-        jnp.stack(g, axis=-1).reshape(-1, ndim) 
+        jnp.stack(g, axis=-1).reshape(-1, n_d) 
         for g in gpts_list
     ], axis=0)
     gpoints = 2 * jnp.pi * gpts @ recvec
