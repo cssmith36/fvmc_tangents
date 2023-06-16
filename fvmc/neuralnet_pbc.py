@@ -25,10 +25,10 @@ def raw_features_pbc(r, x, latvec, n_freq):
     invvec = jnp.linalg.inv(latvec)
     disp = displace_matrix(pos, pos)
     d_frac = disp @ invvec
-    d_hsin = jnp.sin(jnp.pi * d_frac) @ latvec
+    d_hsin = jnp.sin(jnp.pi * d_frac) @ latvec/jnp.pi
     freqs = jnp.arange(n_freq).reshape(-1, 1)
-    d_asin = jnp.sin(2 * jnp.pi * freqs * d_frac[:,:,None,:]) @ latvec
-    d_acos = jnp.cos(2 * jnp.pi * freqs * d_frac[:,:,None,:]) @ latvec
+    d_asin = jnp.sin(2*jnp.pi * freqs * d_frac[:,:,None,:]) @ latvec/jnp.pi
+    d_acos = jnp.cos(2*jnp.pi * freqs * d_frac[:,:,None,:]) @ latvec/jnp.pi
     d_freq = jnp.concatenate([
         d_asin, d_acos
     ], axis=-2).reshape(n_p, n_p, -1)
