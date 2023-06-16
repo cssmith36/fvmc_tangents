@@ -70,6 +70,7 @@ def test_orbital_shape():
     assert orbital.apply(params, nuclei, x[0]).shape == (n_el, n_orb)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("full_det,spin", [(True, None), (False, 1)])
 def test_slater_antisymm(full_det, spin):
     nuclei, elems, x = make_collapse_conf()
@@ -90,6 +91,7 @@ def test_slater_antisymm(full_det, spin):
     np.testing.assert_allclose(logf1, logf2)
 
 
+@pytest.mark.slow
 def test_jastrow_slater():
     nuclei, elems, x = make_collapse_conf()
     x = x[0]
