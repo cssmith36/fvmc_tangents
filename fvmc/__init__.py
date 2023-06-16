@@ -16,15 +16,17 @@ with warnings.catch_warnings():
     warnings.simplefilter("ignore", category=DeprecationWarning)
     from . import (
         utils,
+        ewaldsum,
         hamiltonian,
-        wavefunction,
         sampler,
         estimator,
         optimizer,
         preconditioner,
+        wavefunction,
+        neuralnet,
+        neuralnet_pbc,
         config,
         train,
-        neuralnet,
     )
 
 # __all__ = [
