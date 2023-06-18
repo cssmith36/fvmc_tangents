@@ -1,5 +1,5 @@
 from functools import partial
-from typing import NamedTuple, Optional, Tuple, Union
+from typing import NamedTuple, Tuple, Sequence, Optional
 
 import jax
 import kfac_jax
@@ -13,6 +13,7 @@ from . import LOGGER
 from .estimator import (build_eval_local_elec, build_eval_local_full,
                         build_eval_total)
 from .neuralnet import FermiNet
+from .neuralnet_pbc import FermiNetPbc, NucleiGaussianSlaterPbc
 from .optimizer import build_lr_schedule, build_optimizer
 from .sampler import (build_conf_init_fn, build_sampler, make_batched,
                       make_multistep)
@@ -24,9 +25,10 @@ from .wavefunction import (FixNuclei, NucleiGaussianSlater, ProductModel,
 
 
 class SysInfo(NamedTuple):
-    elems: Array
+    elems: Sequence[int]
+    spins: Tuple[int, int]
     nuclei: Array
-    n_elec: Tuple[int, int]
+    cell: Optional[Array] = None
 
 
 class TrainingState(NamedTuple):
@@ -83,13 +85,18 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
 
     # parse system, may be changed (e.g. using pyscf mol)
     nuclei = jnp.asarray(system_cfg.nuclei)
-    elems = jnp.asarray(system_cfg.elems)
+    elems = jnp.asarray(system_cfg.elems, dtype=int)
     tot_elec = int(sum(elems) + system_cfg.charge)
     spin = system_cfg.spin if system_cfg.spin is not None else tot_elec % 2
     assert (tot_elec - spin) % 2 == 0, \
         f"system with {tot_elec} electrons cannot have spin {spin}"
     n_elec = (tot_elec + spin) // 2, (tot_elec - spin) // 2
-    system = SysInfo(elems, nuclei, n_elec)
+    cell = system_cfg.get("cell", None)
+    if cell is not None:
+        cell = jnp.asarray(cell)
+        if cell.ndim == 1:
+            cell = jnp.diag(cell)
+    system = SysInfo(elems, n_elec, nuclei, cell)
 
     # make wavefunction
     if isinstance(ansatz_cfg, nn.Module):
@@ -98,16 +105,21 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         ansatz_cfg = ConfigDict(ansatz_cfg)
         # ansatz = build_jastrow_slater(elems, n_elec, nuclei,
         #     dynamic_nuclei=fully_quantum, **ansatz_cfg)
-        ansatz = FermiNet(elems=elems, spins=n_elec, **ansatz_cfg)
+        if cell is None:
+            ansatz = FermiNet(elems=elems, spins=n_elec, **ansatz_cfg)
+        else:
+            ansatz = FermiNetPbc(elems=elems, spins=n_elec, cell=cell, **ansatz_cfg)
         if fully_quantum:
-            ansatz = ProductModel([ansatz, NucleiGaussianSlater(nuclei, 0.1)])
+            nuclei_ansatz = (NucleiGaussianSlater(nuclei, 0.1) if cell is None
+                             else NucleiGaussianSlaterPbc(cell, nuclei, 0.1))
+            ansatz = ProductModel([ansatz, nuclei_ansatz])
         else:
             ansatz = FixNuclei(ansatz, nuclei)
     log_prob_fn = log_prob_from_model(ansatz)
 
     # make estimators
-    local_fn = (build_eval_local_full(ansatz, elems) if fully_quantum
-                else build_eval_local_elec(ansatz, elems, nuclei))
+    local_fn = (build_eval_local_full(ansatz, elems, cell) if fully_quantum
+                else build_eval_local_elec(ansatz, elems, nuclei, cell))
     loss_fn = build_eval_total(local_fn, 
         pmap_axis_name=PAXIS.name, **optimize_cfg.loss)
     loss_and_grad = jax.value_and_grad(loss_fn, has_aux=True)
