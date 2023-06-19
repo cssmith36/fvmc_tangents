@@ -81,18 +81,18 @@ class PbcEnvelope(nn.Module):
         kpts = jnp.asarray(gen_kidx(n_d, n_k, self.close_shell))
         kvecs = 2 * jnp.pi * kpts @ recvec # [n_k, 3]
         # backflow x and inner product
-        x_bf = nn.Dense(n_d)(h1) + x # [n_el, 3]
+        x_bf = nn.Dense(n_d, param_dtype=_t_real)(h1) + x # [n_el, 3]
         k_dot_x = x_bf @ kvecs.T # [n_el, n_k]
         # potential flip k for spin down
         # k_dot_x = k_dot_x.at[-n_dn:].multiply(-1)
         if self.use_complex:
             eikx = jnp.exp(1j * k_dot_x)
-            return nn.Dense(self.n_out, use_bias=False)(eikx)
+            return nn.Dense(self.n_out, False, param_dtype=_t_real)(eikx)
         else:
             sinkx = jnp.sin(k_dot_x)
             coskx = jnp.cos(k_dot_x)
-            return (nn.Dense(self.n_out, use_bias=False)(sinkx) 
-                  + nn.Dense(self.n_out, use_bias=False)(coskx))
+            return (nn.Dense(self.n_out, False, param_dtype=_t_real)(sinkx) 
+                  + nn.Dense(self.n_out, False, param_dtype=_t_real)(coskx))
         
 
 class GeminalMap(nn.Module):
@@ -110,7 +110,7 @@ class GeminalMap(nn.Module):
         h1_size = h1.shape[-1]
         h1_el = h1[-n_elec:]
         # single orbital
-        sorbitals = nn.Dense(h1_size)(h1_el) # [n_elec, h1_size]
+        sorbitals = nn.Dense(h1_size, param_dtype=_t_real)(h1_el) # [n_elec, h1_size]
         sorb_up, sorb_dn = jnp.split(sorbitals, [n_up], axis=0)
         # single envelope
         envelopes = PbcEnvelope(self.cell, n_det, **self.envelope)(h1_el, x)
@@ -125,8 +125,10 @@ class GeminalMap(nn.Module):
                 arr, jnp.ones((n_sdiff, arr.shape[-1]))
             ], axis=0) for arr in (sorb_dn, evlp_dn)]
         # make geminals
-        w = self.param("w", nn.initializers.normal(0.01), (n_det, h1_size))
-        pair_orbs = jnp.einsum('kl,il,jl->kij', w, sorb_up, sorb_dn.conj())
+        w = self.param("w", nn.initializers.normal(0.01), (h1_size, n_det))
+        # make it kfac recognizable
+        # pair_orbs = jnp.einsum('lk,il,jl->kij', w, sorb_up, sorb_dn.conj())
+        pair_orbs = ((sorb_up[:,None,:] * sorb_dn.conj()) @ w).transpose(2,0,1)
         pair_envs = jnp.einsum('ik,jk->kij', evlp_up, evlp_dn.conj())
         return pair_orbs * pair_envs
 
