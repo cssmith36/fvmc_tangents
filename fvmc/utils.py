@@ -260,6 +260,17 @@ def collect_elems(elems):
     return uelems, counts
 
 
+def replicate_cell(pos, cell, copies):
+    pos, cell, copies = list(map(onp.asarray, (pos, cell, copies)))
+    assert pos.ndim == cell.ndim == 2
+    assert pos.shape[-1] == cell.shape[0] == cell.shape[1] == len(copies)
+    n_d = pos.shape[-1]
+    XYZ = jnp.meshgrid(*[onp.arange(0, n_c) for n_c in copies], indexing="ij")
+    xyz = jnp.stack(XYZ, axis=-1).reshape((-1, 1, n_d))
+    disp = xyz @ cell
+    return (pos + disp).reshape(-1, n_d), onp.diag(copies) @ cell
+
+
 def adaptive_residual(x, y, rescale=False):
     if y.shape != x.shape:
         return y

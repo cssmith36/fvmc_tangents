@@ -71,6 +71,18 @@ def test_ewaldsum_transinv(conf):
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize("conf", [_get_NaCl_conf, _get_CaF2_conf])
+def test_ewaldsum_replicate(conf):
+    from fvmc.utils import replicate_cell
+    latvec, charge, pos, answer = conf()
+    e_raw = EwaldSum(latvec).energy(charge, pos)
+    rpos, rlatvec = replicate_cell(pos, latvec, (2, 2, 2))
+    rcharge = jnp.tile(charge, 8)
+    e_rep = EwaldSum(rlatvec).energy(rcharge, rpos)
+    np.testing.assert_allclose(e_rep, e_raw * 8, rtol=1e-7)
+
+
+@pytest.mark.slow
 def test_ewaldsum_calc_pe():
     latvec, charge, pos, answer = _get_NaCl_conf1()
     elems = charge[:4]
