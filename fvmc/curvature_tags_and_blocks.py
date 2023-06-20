@@ -38,30 +38,38 @@ def register_repeated_dense(y, x, w, b):
 
 
 class RepeatedDenseBlock(kfac_jax.DenseTwoKroneckerFactored):
-    """Dense block that is repeatedly applied to multiple inputs (e.g. vmap)."""
+  """Dense block that is repeatedly applied to multiple inputs (e.g. vmap)."""
 
-    def fixed_scale(self) -> chex.Numeric:
-        (x_shape,) = self.inputs_shapes
-        return float(kfac_jax.utils.product(x_shape) // (x_shape[0] * x_shape[-1]))
+  def fixed_scale(self) -> chex.Numeric:
+    (x_shape,) = self.inputs_shapes
+    return float(kfac_jax.utils.product(x_shape) // (x_shape[0] * x_shape[-1]))
 
-    def update_curvature_matrix_estimate(
-        self,
-        state: kfac_jax.TwoKroneckerFactored.State,
-        estimation_data: Mapping[str, Sequence[chex.Array]],
-        ema_old: chex.Numeric,
-        ema_new: chex.Numeric,
-        batch_size: int,
-        pmap_axis_name: Optional[str],
-    ) -> kfac_jax.TwoKroneckerFactored.State:
-        estimation_data = dict(**estimation_data)
-        x, = estimation_data["inputs"]
-        dy, = estimation_data["outputs_tangent"]
-        assert x.shape[0] == batch_size
-        estimation_data["inputs"] = (x.reshape([-1, x.shape[-1]]),)
-        estimation_data["outputs_tangent"] = (dy.reshape([-1, dy.shape[-1]]),)
-        batch_size = x.size // x.shape[-1]
-        return super().update_curvature_matrix_estimate(
-            state, estimation_data, ema_old, ema_new, batch_size, pmap_axis_name)
+  def update_curvature_matrix_estimate(
+      self,
+      state: kfac_jax.TwoKroneckerFactored.State,
+      estimation_data: Mapping[str, Sequence[chex.Array]],
+      ema_old: chex.Numeric,
+      ema_new: chex.Numeric,
+      batch_size: int,
+      pmap_axis_name: Optional[str],
+      sync: chex.Array | bool = True,
+  ) -> kfac_jax.TwoKroneckerFactored.State:
+    estimation_data = dict(**estimation_data)
+    x, = estimation_data["inputs"]
+    dy, = estimation_data["outputs_tangent"]
+    assert x.shape[0] == batch_size
+    estimation_data["inputs"] = (x.reshape([-1, x.shape[-1]]),)
+    estimation_data["outputs_tangent"] = (dy.reshape([-1, dy.shape[-1]]),)
+    batch_size = x.size // x.shape[-1]
+    return super().update_curvature_matrix_estimate(
+        state=state,
+        estimation_data=estimation_data,
+        ema_old=ema_old,
+        ema_new=ema_new,
+        batch_size=batch_size,
+        pmap_axis_name=pmap_axis_name,
+        sync=sync,
+    )
             
 
 def _dense(x: chex.Array, params: Sequence[chex.Array]) -> chex.Array:
