@@ -104,7 +104,7 @@ def test_eval_total(clipping, weighted):
     )
     
     eval_total = build_eval_total(eval_local, clipping, 
-                    grad_stablizing=False, use_weighted=weighted)
+                    center_shifting=False, use_weighted=weighted)
     eval_total_grad = jax.value_and_grad(eval_total, has_aux=True)
 
     # loss, aux = eval_total(a, (x, log_sample))

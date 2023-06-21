@@ -43,7 +43,7 @@ def default() -> ConfigDict:
             "lr": {},
             "loss": {
                 "energy_clipping": 5.,
-                "grad_stablizing": True,
+                "center_shifting": True,
             },
             "optimizer": "kfac",
             "grad_clipping": 1., # will not work for kfac
