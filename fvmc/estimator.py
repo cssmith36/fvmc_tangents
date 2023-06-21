@@ -95,10 +95,9 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
             outside [E_t - n D, E_t + n D], where E_t is the mean local energy, n is
             this value and D the mean absolute deviation of the local energies.
             Defaults to None (no clipping).
-        grad_stablizing (bool): If True, use a trick that substract the mean in the grad
-            of log psi. This should give no contribution when there is no energy clipping
-            because it is a constant times averaged E_loc - E_tot, which is zero. 
-            But it will be helpful at the begining of training
+        center_shifting (bool): If True, shift the average local energy so that
+            the mean difference of the batch is always zero. Will only be useful with
+            effective local energy clipping. Defaults to True.
         pmap_axis_name (str): axis name used in pmap
         use_weighted (bool): If True, use `build_eval_total_weighted`, which will
             take the log of sample weight (`data[1]`) into account
@@ -162,7 +161,7 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
 
 
 def build_eval_total_weighted(eval_local_fn, energy_clipping=None, 
-                              center_shifting=False, pmap_axis_name=PMAP_AXIS_NAME):
+                              center_shifting=True, pmap_axis_name=PMAP_AXIS_NAME):
     """Create a function that evaluates quantities on the whole batch of samples.
 
     The created function will take paramters and sampled data as input,
@@ -176,10 +175,9 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
             outside [E_t - n D, E_t + n D], where E_t is the mean local energy, n is
             this value and D the mean absolute deviation of the local energies.
             Defaults to None (no clipping).
-        grad_stablizing (bool): If True, use a trick that substract the mean in the grad
-            of log psi. This should give no contribution when there is no energy clipping
-            because it is a constant times averaged E_loc - E_tot, which is zero. 
-            But it will be helpful at the begining of training
+        center_shifting (bool): If True, shift the average local energy so that
+            the mean difference of the batch is always zero. Will only be useful with
+            effective local energy clipping. Defaults to True.
         pmap_axis_name (str): axis name used in pmap
 
     Returns:

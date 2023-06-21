@@ -40,7 +40,7 @@ class EwaldSum:
     nuclei and electrons on the equal footing and calculate at once.
     """
 
-    def __init__(self, latvec, g_max=200, n_lat=1, g_threshold=1e-12):
+    def __init__(self, latvec, g_max=200, n_lat=1, g_threshold=1e-10):
         """
         Initilization of the Ewald summation class by preparing 
         pbc displace function, lattice displacements, and reciporcal g points
@@ -49,7 +49,7 @@ class EwaldSum:
             latvec (Array): 3x3 matrix with each row a lattice vector 
             g_max (int): How far to take reciprocal sum; probably never needs to be changed.
             n_lat (int): How far to take real-space sum; probably never needs to be changed.
-            g_threshold (float): ignore g points below this value. Following DeepSolid value. 
+            g_threshold (float): ignore g points below this value. Following PyQMC value. 
         """
         self.latvec = jnp.asarray(latvec)
         self.recvec = jnp.linalg.inv(latvec).T
