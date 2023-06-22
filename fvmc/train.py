@@ -99,7 +99,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
     system = SysInfo(elems, n_elec, nuclei, cell)
 
     # make wavefunction
-    if isinstance(ansatz_cfg, nn.Module):
+    if all(callable(getattr(ansatz_cfg, _f, None)) for _f in ('init', 'apply')):
         ansatz = ansatz_cfg
     else:
         ansatz_cfg = ConfigDict(ansatz_cfg)

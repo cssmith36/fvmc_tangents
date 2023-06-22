@@ -60,4 +60,4 @@ def default() -> ConfigDict:
             "hpar_path": "hparams.yaml",
         },
 
-    })
+    }, type_safe=False)
