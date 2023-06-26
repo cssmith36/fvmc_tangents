@@ -40,7 +40,7 @@ class EwaldSum:
     nuclei and electrons on the equal footing and calculate at once.
     """
 
-    def __init__(self, latvec, g_max=200, n_lat=1, g_threshold=1e-10):
+    def __init__(self, latvec, g_max=200, n_lat=1, g_threshold=1e-12, alpha=None):
         """
         Initilization of the Ewald summation class by preparing 
         pbc displace function, lattice displacements, and reciporcal g points
@@ -49,18 +49,21 @@ class EwaldSum:
             latvec (Array): 3x3 matrix with each row a lattice vector 
             g_max (int): How far to take reciprocal sum; probably never needs to be changed.
             n_lat (int): How far to take real-space sum; probably never needs to be changed.
-            g_threshold (float): ignore g points below this value. Following PyQMC value. 
+            g_threshold (float): ignore g points below this value. Following DeepSolid value. 
         """
         self.latvec = jnp.asarray(latvec)
         self.recvec = jnp.linalg.inv(latvec).T
-        self.cellvolume = jnp.linalg.det(latvec)
+        self.cellvolume = jnp.abs(jnp.linalg.det(latvec))
         # determine alpha
         smallest_height = jnp.min(1 / jnp.linalg.norm(self.recvec, axis=1))
-        self.alpha = 5.0 / smallest_height
+        self.alpha = 5.0 / smallest_height if alpha is None else alpha
         # minimal image displacement function
         self.disp_fn = gen_pbc_disp_fn(latvec)
         # lattice displacement to be added to disp in real space sum
         self.lattice_displacements = gen_lattice_displacements(latvec, n_lat)
+        lat_norm = jnp.linalg.norm(self.lattice_displacements, axis=-1)
+        lat_norm = lat_norm[lat_norm > 0]
+        self.simg_const = jnp.sum(jax.lax.erfc(self.alpha * lat_norm) / lat_norm)
         # genetate g points to be used in reciprocal sum. Keep only large gweights
         raw_gpoints = gen_positive_gpoints(self.recvec, g_max)
         raw_gweight = calc_gweight(raw_gpoints, self.cellvolume, self.alpha)
@@ -73,7 +76,7 @@ class EwaldSum:
         q2_sum = jnp.sum(charge ** 2)
         e_self = - self.alpha / jnp.sqrt(jnp.pi) * q2_sum
         e_charged = - jnp.pi / (2 * self.cellvolume * self.alpha ** 2) * q_sum ** 2
-        return e_self + e_charged
+        return e_self, e_charged
     
     def real_part(self, charge, pos):
         # note that the self image contribution is ignored, just like pyqmc
@@ -84,6 +87,7 @@ class EwaldSum:
         r = jnp.linalg.norm(rvec, axis=-1)
         charge_ij = charge[:, None] * charge[None, :]
         e_real = jnp.sum(jnp.triu(charge_ij * jax.lax.erfc(self.alpha * r) / r, k=1))
+        e_real += 0.5 * jnp.sum(charge ** 2) * self.simg_const
         return e_real
     
     def recip_part(self, charge, pos):
@@ -94,7 +98,7 @@ class EwaldSum:
     
     def energy(self, charge, pos):
         """Calculation the Coulomb energy from point charges and their positions"""
-        return (self.const_part(charge) 
+        return (sum(self.const_part(charge))
                 + self.real_part(charge, pos) 
                 + self.recip_part(charge, pos))
     
