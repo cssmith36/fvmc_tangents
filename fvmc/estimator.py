@@ -27,8 +27,8 @@ def build_eval_local_elec(model, elems, nuclei, cell=None):
     Args:
         model (nn.Module): a flax module that calculates the sign and log abs of wavefunction.
             `model.apply` should have signature (params, x) -> (sign(f(x)), log|f(x)|)
-        nuclei (Array): the position of nuclei.
         elems (Array): the element indices (charges) of those nuclei.
+        nuclei (Array): the position of nuclei.
         cell (Optional Array): if not None, using ewald summation for potential energy in PBC
 
     Returns:
