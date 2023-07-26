@@ -64,6 +64,7 @@ def gen_kidx(n_d, n_k, close_shell=True):
     
 
 class PbcEnvelope(nn.Module):
+    spins: tuple[int, int]
     cell: Array
     n_out: int
     n_k: Optional[int] = None
@@ -73,7 +74,10 @@ class PbcEnvelope(nn.Module):
     @nn.compact
     def __call__(self, h1, x):
         # check shapes
+        n_up, n_dn = self.spins
+        n_max = max(n_up, n_dn)
         n_el, n_d = x.shape
+        assert n_up + n_dn == n_el
         h1 = h1[-n_el:]
         # prepare k grid
         n_k = self.n_k or n_el // 2
@@ -82,55 +86,50 @@ class PbcEnvelope(nn.Module):
         kvecs = 2 * jnp.pi * kpts @ recvec # [n_k, 3]
         # backflow x and inner product
         x_bf = nn.Dense(n_d, param_dtype=_t_real)(h1) + x # [n_el, 3]
-        k_dot_x = x_bf @ kvecs.T # [n_el, n_k]
-        # potential flip k for spin down
-        # k_dot_x = k_dot_x.at[-n_dn:].multiply(-1)
+        x_up, x_dn = jnp.split(x_bf, [n_up], axis=0)
+        x_delta = x_up[:, None, :] - x_dn # [n_up, n_dn, 3]
+        k_dot_x = x_delta @ kvecs.T # [n_up, n_dn, n_k]        
         if self.use_complex:
             eikx = jnp.exp(1j * k_dot_x)
-            return nn.Dense(self.n_out, False, param_dtype=_t_real)(eikx)
+            evlp = nn.Dense(self.n_out, False, param_dtype=_t_real)(eikx)
         else:
             sinkx = jnp.sin(k_dot_x)
             coskx = jnp.cos(k_dot_x)
-            return (nn.Dense(self.n_out, False, param_dtype=_t_real)(sinkx) 
+            evlp = (nn.Dense(self.n_out, False, param_dtype=_t_real)(sinkx) 
                   + nn.Dense(self.n_out, False, param_dtype=_t_real)(coskx))
-        
+        # padding and transpose
+        base = jnp.ones((self.n_out, n_max, n_max), dtype=evlp.dtype)
+        return base.at[:, :n_up, :n_dn].set(evlp.transpose(2, 0, 1))
+
 
 class GeminalMap(nn.Module):
     spins: tuple[int, int]
     cell: Array
     determinants: int
-    envelope: dict = dataclasses.field(default_factory=dict)
 
     @nn.compact
-    def __call__(self, h1, x):
+    def __call__(self, h1, h2=None):
         n_det = self.determinants
         n_up, n_dn = self.spins
-        n_elec = n_up + n_dn
         n_sdiff = abs(n_up - n_dn)
-        h1_size = h1.shape[-1]
-        h1_el = h1[-n_elec:]
+        n_el, h1_size = h1.shape
+        assert n_up + n_dn == n_el
         # single orbital
-        sorbitals = nn.Dense(h1_size, param_dtype=_t_real)(h1_el) # [n_elec, h1_size]
+        sorbitals = nn.Dense(h1_size, param_dtype=_t_real)(h1) # [n_elec, h1_size]
         sorb_up, sorb_dn = jnp.split(sorbitals, [n_up], axis=0)
-        # single envelope
-        envelopes = PbcEnvelope(self.cell, n_det, **self.envelope)(h1_el, x)
-        evlp_up, evlp_dn = jnp.split(envelopes, [n_up], axis=0)
         # pad ones for smaller spin
         if n_up < n_dn:
-            sorb_up, evlp_up = [jnp.concatenate([
-                arr, jnp.ones((n_sdiff, arr.shape[-1]))
-            ], axis=0) for arr in (sorb_up, evlp_up)]
+            sorb_up = jnp.concatenate(
+                [sorb_up, jnp.ones((n_sdiff, h1_size))], axis=0)
         elif n_up > n_dn:
-            sorb_dn, evlp_dn = [jnp.concatenate([
-                arr, jnp.ones((n_sdiff, arr.shape[-1]))
-            ], axis=0) for arr in (sorb_dn, evlp_dn)]
+            sorb_dn = jnp.concatenate(
+                [sorb_dn, jnp.ones((n_sdiff, h1_size))], axis=0)
         # make geminals
         w = self.param("w", nn.initializers.normal(0.01), (h1_size, n_det))
         # make it kfac recognizable
         # pair_orbs = jnp.einsum('lk,il,jl->kij', w, sorb_up, sorb_dn.conj())
         pair_orbs = ((sorb_up[:,None,:] * sorb_dn.conj()) @ w).transpose(2,0,1)
-        pair_envs = jnp.einsum('ik,jk->kij', evlp_up, evlp_dn.conj())
-        return pair_orbs * pair_envs
+        return pair_orbs + 1
 
 
 class FermiNetPbc(FullWfn):
@@ -180,10 +179,15 @@ class FermiNetPbc(FullWfn):
             h1, h2 = flayer(h1, h2)
 
         geminal_map = GeminalMap(self.spins, self.cell, 
-                                 self.determinants, self.envelope)
-        geminals = geminal_map(h1[-n_elec:], x)
+                                 self.determinants)
+        geminals = geminal_map(h1[-n_elec:], h2[-n_elec:, -n_elec:])
 
-        signs, logdets = jnp.linalg.slogdet(geminals)
+        envelope_map = PbcEnvelope(self.spins, self.cell,
+                                   self.determinants, **self.envelope)
+        envelopes = envelope_map(h1[-n_elec:], x)
+
+        dets = geminals * envelopes
+        signs, logdets = jnp.linalg.slogdet(dets)
         det_weights = self.param(
             "det_weights", nn.initializers.ones, (self.determinants, 1))
         sign, logpsi = log_linear_exp(signs, logdets, det_weights, axis=0)
@@ -195,6 +199,7 @@ class FermiNetPbc(FullWfn):
         jastrow_weight = self.param(
             "jastrow_weights", nn.initializers.zeros, ())
         logpsi += jastrow_weight * jastrow(h1).mean()
+
         # electron-electron cusp condition
         cusp = ElectronCusp((n_up, n_dn))
         logpsi += cusp(d_ee=dmat[n_nucl:, n_nucl:, -1])
