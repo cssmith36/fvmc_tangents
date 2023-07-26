@@ -45,32 +45,33 @@ def aggregate_features(h1, h2, split_sec, spin_symmetry):
     assert split_sec.ndim == 1 and len(split_sec) >= 2
     # last two sections are electrons with spin up and down
     *elem_sec, n_up, n_dn = split_sec
+    n_particle = sum(split_sec)
     n_nucl = sum(elem_sec)
+    assert n_particle == h1.shape[0] == h2.shape[0] == h2.shape[1]
     split_idx = onp.cumsum(split_sec)[:-1]
+    # global input
+    h1_mean = jnp.tile(jnp.stack([
+        h1_sec.mean(axis=0)
+        for h1_sec in jnp.split(h1, split_idx, axis=0)
+        if h1_sec.size > 0
+    ], axis=-2), (n_particle, 1, 1)) # [n_particle, n_sec, n_desc]
     # Single input
-    h2_mean = jnp.stack(
-        [
-            h2_sec.mean(axis=1)
-            for h2_sec in jnp.split(h2, split_idx, axis=1) 
-            if h2_sec.size > 0
-        ], axis=-2) # [n_particle, n_sec, n_desc]
+    h2_mean = jnp.stack([
+        h2_sec.mean(axis=1)
+        for h2_sec in jnp.split(h2, split_idx, axis=1) 
+        if h2_sec.size > 0
+    ], axis=-2) # [n_particle, n_sec, n_desc]
+    # switch spin
     if spin_symmetry:
-        h2_mean = h2_mean.at[-n_dn:, -2:].set(h2_mean[-n_dn:, (-1, -2)]) # switch spin
-    nucl_one, elec_one = jnp.split(
-        jnp.concatenate([h1, h2_mean.reshape(h1.shape[0], -1)], axis=-1),
-        [n_nucl], axis=0)
+        h1_mean = h1_mean.at[-n_dn:, -2:].set(h1_mean[-n_dn:, (-1, -2)])
+        h2_mean = h2_mean.at[-n_dn:, -2:].set(h2_mean[-n_dn:, (-1, -2)])
     # Global input
-    h1_mean = jnp.tile(jnp.stack(
-        [
-            h1_sec.mean(axis=0)
-            for h1_sec in jnp.split(h1, split_idx, axis=0)
-            if h1_sec.size > 0
-        ], axis=-2), (3, 1, 1)) # [3, n_sec, n_desc], 3 for (nucl, e_up, e_dn)
-    if spin_symmetry:
-        h1_mean = h1_mean.at[-1, -2:].set(h1_mean[-1, (-1, -2)]) # switch spin
-    nucl_all, elec_all = jnp.split(
-        h1_mean.reshape(h1_mean.shape[0], -1), [1], axis=0)
-    return nucl_one, nucl_all, elec_one, elec_all
+    feature = jnp.concatenate([
+        h1, 
+        h2_mean.reshape(n_particle, -1),
+        h1_mean.reshape(n_particle, -1),
+    ], axis=-1)
+    return feature
 
 
 class FermiLayer(nn.Module):
@@ -85,38 +86,11 @@ class FermiLayer(nn.Module):
     @nn.compact
     def __call__(self, h1, h2):
         n_particle = sum(self.split_sec)
-        assert n_particle == h1.shape[0] == h2.shape[0] == h2.shape[1]
-        *elem_sec, n_up, n_dn = self.split_sec
-        n_nucl = sum(elem_sec)
         actv_fn = parse_activation(self.activation, rescale=self.rescale_residual)
-
         # Single update
-        nucl_one, nucl_all, elec_one, elec_all = aggregate_features(
-            h1, h2, self.split_sec, self.spin_symmetry
-        )
-
-        # nuclei h1 part
-        # per nucleus contribution
-        n1_new = nn.Dense(self.single_size, param_dtype=_t_real)(nucl_one)
-        # global contribution (all_new.shape == (2, n_single))
-        na_new = nn.Dense(self.single_size, use_bias=False, param_dtype=_t_real)(nucl_all) 
-        na_new = na_new.repeat(n_nucl, axis=0) # broadcast to all nuclei
-        # combine both of them to get new h1
-        nucl_new = n1_new + na_new #/ jnp.sqrt(2.0)
-
-        # electron h1 part
-        # per electron contribution
-        e1_new = nn.Dense(self.single_size, param_dtype=_t_real)(elec_one)
-        # global contribution (all_new.shape == (2, n_single))
-        ea_new = nn.Dense(self.single_size, use_bias=False, param_dtype=_t_real)(elec_all) 
-        ea_new = ea_new.repeat(onp.array([n_up, n_dn]), axis=0) # broadcast to both spins
-        # combine both of them to get new h1
-        elec_new = e1_new + ea_new #/ jnp.sqrt(2.0)
-
-        h1_new = jnp.concatenate([nucl_new, elec_new], axis=0)
-        assert h1_new.shape[:-1] == h1.shape[:-1]
+        features = aggregate_features(h1, h2, self.split_sec, self.spin_symmetry)
+        h1_new = nn.Dense(self.single_size, param_dtype=_t_real)(features)
         h1 = adaptive_residual(h1, actv_fn(h1_new), rescale=self.rescale_residual)
-        
         # Pairwise update
         if self.identical_h2_update:
             h2_new = nn.Dense(self.pair_size, param_dtype=_t_real)(h2)
