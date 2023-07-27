@@ -46,7 +46,6 @@ def aggregate_features(h1, h2, split_sec, spin_symmetry):
     # last two sections are electrons with spin up and down
     *elem_sec, n_up, n_dn = split_sec
     n_particle = sum(split_sec)
-    n_nucl = sum(elem_sec)
     assert n_particle == h1.shape[0] == h2.shape[0] == h2.shape[1]
     split_idx = onp.cumsum(split_sec)[:-1]
     # global input
@@ -86,10 +85,15 @@ class FermiLayer(nn.Module):
     @nn.compact
     def __call__(self, h1, h2):
         n_particle = sum(self.split_sec)
+        *elem_sec, n_up, n_dn = self.split_sec
+        n_nucl = sum(elem_sec)
         actv_fn = parse_activation(self.activation, rescale=self.rescale_residual)
         # Single update
         features = aggregate_features(h1, h2, self.split_sec, self.spin_symmetry)
-        h1_new = nn.Dense(self.single_size, param_dtype=_t_real)(features)
+        f_nucl, f_elec = jnp.split(features, [n_nucl], axis=0)
+        h1_new_nucl = nn.Dense(self.single_size, param_dtype=_t_real)(f_nucl)
+        h1_new_elec = nn.Dense(self.single_size, param_dtype=_t_real)(f_elec)
+        h1_new = jnp.concatenate([h1_new_nucl, h1_new_elec], axis=0)
         h1 = adaptive_residual(h1, actv_fn(h1_new), rescale=self.rescale_residual)
         # Pairwise update
         if self.identical_h2_update:
