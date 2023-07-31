@@ -70,6 +70,7 @@ class PbcEnvelope(nn.Module):
     n_k: Optional[int] = None
     close_shell: bool = True
     use_complex: bool = False
+    onebody_prod: bool = False
 
     @nn.compact
     def __call__(self, h1, x):
@@ -85,18 +86,31 @@ class PbcEnvelope(nn.Module):
         kpts = jnp.asarray(gen_kidx(n_d, n_k, self.close_shell))
         kvecs = 2 * jnp.pi * kpts @ recvec # [n_k, 3]
         # backflow x and inner product
-        x_bf = nn.Dense(n_d, param_dtype=_t_real)(h1) + x # [n_el, 3]
-        x_up, x_dn = jnp.split(x_bf, [n_up], axis=0)
-        x_delta = x_up[:, None, :] - x_dn # [n_up, n_dn, 3]
-        k_dot_x = x_delta @ kvecs.T # [n_up, n_dn, n_k]
-        if self.use_complex:
-            eikx = jnp.exp(1j * k_dot_x)
-            evlp = nn.Dense(self.n_out, False, param_dtype=_t_real)(eikx).real
+        x_bf = x + nn.Dense(n_d, param_dtype=_t_real)(h1) # [n_el, 3]
+        if self.onebody_prod:
+            k_dot_x = x_bf @ kvecs.T # [n_el, n_k]
+            if self.use_complex:
+                eikx = jnp.exp(1j * k_dot_x)
+                ev_1b = nn.Dense(self.n_out, False, param_dtype=_t_real)(eikx)
+            else:
+                sinkx = jnp.sin(k_dot_x)
+                coskx = jnp.cos(k_dot_x)
+                ev_1b = (nn.Dense(self.n_out, False, param_dtype=_t_real)(sinkx) 
+                      + nn.Dense(self.n_out, False, param_dtype=_t_real)(coskx))
+            ev_up, ev_dn = jnp.split(ev_1b, [n_up], axis=0)
+            evlp = (ev_up[:, None, :] * ev_dn.conj()).real
         else:
-            sinkx = jnp.sin(k_dot_x)
-            coskx = jnp.cos(k_dot_x)
-            evlp = (nn.Dense(self.n_out, False, param_dtype=_t_real)(sinkx) 
-                  + nn.Dense(self.n_out, False, param_dtype=_t_real)(coskx))
+            x_up, x_dn = jnp.split(x_bf, [n_up], axis=0)
+            x_delta = x_up[:, None, :] - x_dn # [n_up, n_dn, 3]
+            k_dot_x = x_delta @ kvecs.T # [n_up, n_dn, n_k]
+            if self.use_complex:
+                eikx = jnp.exp(1j * k_dot_x)
+                evlp = nn.Dense(self.n_out, False, param_dtype=_t_real)(eikx).real
+            else:
+                sinkx = jnp.sin(k_dot_x)
+                coskx = jnp.cos(k_dot_x)
+                evlp = (nn.Dense(self.n_out, False, param_dtype=_t_real)(sinkx) 
+                      + nn.Dense(self.n_out, False, param_dtype=_t_real)(coskx))
         # padding and transpose
         base = jnp.ones((self.n_out, n_max, n_max), dtype=evlp.dtype)
         return base.at[:, :n_up, :n_dn].set(evlp.transpose(2, 0, 1))
