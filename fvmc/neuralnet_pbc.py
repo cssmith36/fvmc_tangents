@@ -70,7 +70,7 @@ class PbcEnvelope(nn.Module):
     n_k: Optional[int] = None
     close_shell: bool = True
     use_complex: bool = False
-    onebody_prod: bool = False
+    onebody_prod: bool = True
 
     @nn.compact
     def __call__(self, h1, x):
@@ -96,7 +96,7 @@ class PbcEnvelope(nn.Module):
                 sinkx = jnp.sin(k_dot_x)
                 coskx = jnp.cos(k_dot_x)
                 ev_1b = (nn.Dense(self.n_out, False, param_dtype=_t_real)(sinkx) 
-                      + nn.Dense(self.n_out, False, param_dtype=_t_real)(coskx))
+                       + nn.Dense(self.n_out, False, param_dtype=_t_real)(coskx))
             ev_up, ev_dn = jnp.split(ev_1b, [n_up], axis=0)
             evlp = (ev_up[:, None, :] * ev_dn.conj()).real
         else:
@@ -150,7 +150,7 @@ class FermiNetPbc(FullWfn):
     elems: Sequence[int]
     spins: tuple[int, int]
     cell: Array
-    raw_freq: int = 5
+    raw_freq: int = 1
     hidden_dims: Sequence[Tuple[int, int]] = ((64, 16),)*4
     determinants: int = 4
     envelope: dict = dataclasses.field(default_factory=dict)
