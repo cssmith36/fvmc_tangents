@@ -27,8 +27,9 @@ def raw_features_pbc(r, x, latvec, n_freq):
     d_frac = disp @ invvec
     d_hsin = jnp.sin(jnp.pi * d_frac) @ latvec/jnp.pi
     freqs = jnp.arange(1, n_freq+1).reshape(-1, 1)
-    d_asin = jnp.sin(2*jnp.pi * freqs * d_frac[:,:,None,:]) @ latvec/jnp.pi
-    d_acos = jnp.cos(2*jnp.pi * freqs * d_frac[:,:,None,:]) @ latvec/jnp.pi
+    radfreqs = 2 * jnp.pi * freqs
+    d_asin = jnp.sin(radfreqs * d_frac[:,:,None,:]) @ latvec/radfreqs
+    d_acos = jnp.cos(radfreqs * d_frac[:,:,None,:]) @ latvec/radfreqs
     d_freq = jnp.concatenate([
         d_asin, d_acos
     ], axis=-2).reshape(n_p, n_p, -1)
@@ -150,7 +151,7 @@ class FermiNetPbc(FullWfn):
     elems: Sequence[int]
     spins: tuple[int, int]
     cell: Array
-    raw_freq: int = 1
+    raw_freq: int = 5
     hidden_dims: Sequence[Tuple[int, int]] = ((64, 16),)*4
     determinants: int = 4
     envelope: dict = dataclasses.field(default_factory=dict)
