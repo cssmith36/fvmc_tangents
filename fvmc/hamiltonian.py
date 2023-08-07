@@ -32,7 +32,15 @@ def calc_pe(elems, r, x):
     return el_el + el_ion + ion_ion
 
 
-def calc_ke_elec(log_psi, x):
+def r2c_grad(f, argnums=0):
+    grad_f_real = jax.grad(lambda *a, **kw: f(*a, **kw).real, argnums=argnums)
+    grad_f_imag = jax.grad(lambda *a, **kw: f(*a, **kw).imag, argnums=argnums)
+    def grad_f(*args, **kwargs):
+        return grad_f_real(*args, **kwargs) + 1j * grad_f_imag(*args, **kwargs)
+    return grad_f
+
+
+def calc_ke_elec(log_psi, x, complex_output=False):
     # adapted from FermiNet and vmcnet
     # calc -0.5 * (\nable^2 \psi) / \psi
     # handle batch of x automatically
@@ -45,7 +53,7 @@ def calc_ke_elec(log_psi, x):
         ncoord = flat_x.size
 
         f = lambda flat_x: log_psi(flat_x.reshape(x_shape)) # take flattened x
-        grad_f = jax.grad(f)
+        grad_f = r2c_grad(f) if complex_output else jax.grad(f)
         grad_value, dgrad_f = jax.linearize(grad_f, flat_x)
 
         eye = jnp.eye(ncoord)
@@ -70,7 +78,7 @@ def get_nuclei_mass(elems):
     return mass
 
 
-def calc_ke_full(log_psi, mass, r, x):
+def calc_ke_full(log_psi, mass, r, x, complex_output=False):
     # adapted from FermiNet and vmcnet
     # calc -0.5 * (\nable^2 \psi) / \psi
     # handle batch of r, x automatically
@@ -84,7 +92,7 @@ def calc_ke_full(log_psi, mass, r, x):
         assert mass.size == r.shape[0]
         
         f = lambda flat_in: log_psi(*unravel(flat_in)) # take flattened x
-        grad_f = jax.grad(f)
+        grad_f = r2c_grad(f) if complex_output else jax.grad(f)
         grad_value, dgrad_f = jax.linearize(grad_f, flat_in)
 
         minv = jnp.concatenate([jnp.repeat(1/mass, r.shape[1]), 

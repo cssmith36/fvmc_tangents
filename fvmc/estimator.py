@@ -21,6 +21,16 @@ def clip_around(a, target, half_range, stop_gradient=True):
     return jnp.clip(a, c_min, c_max)
 
 
+def get_log_psi(model_apply, params):
+    # make log of wavefunction from model.apply
+    def log_psi(*args):
+        sign, logd = model_apply(params, *args)
+        if jnp.iscomplexobj(sign):
+            logd += jnp.log(sign)
+        return logd
+    return log_psi
+
+
 def build_eval_local_elec(model, elems, nuclei, cell=None):
     """create a function that evaluates local energy, sign and log abs of wavefunction.
     
@@ -39,11 +49,11 @@ def build_eval_local_elec(model, elems, nuclei, cell=None):
     calc_pe_adapt = EwaldSum(cell).calc_pe if cell is not None else calc_pe
 
     def eval_local(params, x):
-        log_psi_abs = ith_output(partial(model.apply, params), 1)
-        ke = calc_ke_elec(log_psi_abs, x)
+        sign, logf = model.apply(params, x)
+        log_psi_fn = get_log_psi(model.apply, params)
+        ke = calc_ke_elec(log_psi_fn, x, complex_output=jnp.iscomplexobj(sign))
         pe = calc_pe_adapt(elems, nuclei, x)
         eloc = ke + pe
-        sign, logf = model.apply(params, x)
         return eloc, sign, logf
 
     return eval_local
@@ -69,11 +79,11 @@ def build_eval_local_full(model, elems, cell=None):
 
     def eval_local(params, conf):
         r, x = conf
-        log_psi_abs = ith_output(partial(model.apply, params), 1)
-        ke = calc_ke_full(log_psi_abs, mass, r, x)
+        sign, logf = model.apply(params, r, x)
+        log_psi_fn = get_log_psi(model.apply, params)
+        ke = calc_ke_full(log_psi_fn, mass, r, x, complex_output=jnp.iscomplexobj(sign))
         pe = calc_pe_adapt(elems, r, x)
         eloc = ke + pe
-        sign, logf = model.apply(params, r, x)
         return eloc, sign, logf
 
     return eval_local
@@ -134,6 +144,8 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
         # data is a tuple of sample and log of sampling weight
         conf, _ = data
         eloc, sign, logf = batch_local(params, conf)
+        if jnp.iscomplexobj(sign):
+            logf += jnp.log(sign)
 
         # compute total energy
         etot = paxis.all_nanmean(eloc)
@@ -152,7 +164,7 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
         ebar = paxis.all_nanmean(eclip) if center_shifting else etot
         ediff = lax.stop_gradient(eclip - ebar).conj()
         # 2 * real for h.c.
-        kfac_jax.register_squared_error_loss(logf[:, None])
+        kfac_jax.register_squared_error_loss(logf.real[:, None])
         loss = paxis.all_nanmean(2 * (logf * ediff).real)
         
         return loss, aux
@@ -207,6 +219,8 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
         conf, logsw = data
         logsw = lax.stop_gradient(logsw)
         eloc, sign, logf = batch_local(params, conf)
+        if jnp.iscomplexobj(sign):
+            logf += jnp.log(sign)
 
         # calculating relative weights for stats
         rel_w, lshift = exp_shifted(2*logf.real - logsw, 
@@ -238,7 +252,7 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
         ebar = paxis.all_nanaverage(eclip, rel_w) if center_shifting else etot
         ediff = lax.stop_gradient(eclip_c - ebar.conj())
         # 2 * real for h.c.
-        kfac_jax.register_squared_error_loss(psi_sqr[:, None])
+        kfac_jax.register_squared_error_loss(psi_sqr.real[:, None])
         loss = (paxis.all_nansum(2 * (psi_sqr * ediff).real) 
                 / paxis.all_nansum(~jnp.isnan(ediff) * rel_w_d))
         

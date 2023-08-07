@@ -1,5 +1,6 @@
 # many test functions are borrowed from vmcnet
 
+import jax
 import pytest
 import numpy as np
 from jax import numpy as jnp
@@ -91,6 +92,25 @@ def test_kinetic_energy_full(x):
     actual_ke = calc_ke_full(log_psi, mass, x, x)
 
     np.testing.assert_allclose(actual_ke, target_ke, rtol=1e-6)
+
+
+_raw_p = -jnp.arange(1,4)
+@pytest.mark.parametrize("p", [_raw_p, _raw_p*1j, _raw_p*1j + 2])
+def test_kinetic_energy_compelx(p):
+    # psi = exp[p @ x]
+    def log_psi_fn(x):
+        exp = jnp.exp(x @ p).reshape(1, 1)
+        sign, logd = jnp.linalg.slogdet(exp)
+        return logd + (jnp.log(sign) if jnp.iscomplexobj(sign) else 0.)
+    
+    key0 = jax.random.PRNGKey(0)
+    xx = jax.random.uniform(key0, (1, p.shape[-1]))
+
+    # target ke should be -0.5 * p**2
+    target_ke = jnp.sum(-0.5 * p**2)
+    actual_ke = calc_ke_elec(log_psi_fn, xx, complex_output=jnp.iscomplexobj(p))
+
+    np.testing.assert_allclose(actual_ke, target_ke)
 
 
 @pytest.mark.parametrize("x", [make_test_x(), make_batched_x()])

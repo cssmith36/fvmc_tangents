@@ -320,21 +320,19 @@ def log_linear_exp(
         None, and d' = weights.shape[1] otherwise.
     """
     max_val = jnp.max(vals, axis=axis, keepdims=True)
-    terms_divided_by_max = signs * jnp.exp(vals - max_val)
+    shifted = signs * jnp.exp(vals - max_val)
     if weights is not None:
         # swap axis and -1 to conform to jnp.dot api
-        terms_divided_by_max = jnp.swapaxes(terms_divided_by_max, axis, -1)
-        transformed_divided_by_max = jnp.dot(terms_divided_by_max, weights)
+        shifted = jnp.swapaxes(shifted, axis, -1)
+        result = jnp.dot(shifted, weights)
         # swap axis and -1 back after the contraction
-        transformed_divided_by_max = jnp.swapaxes(transformed_divided_by_max, axis, -1)
+        result = jnp.swapaxes(result, axis, -1)
     else:
-        transformed_divided_by_max = jnp.sum(
-            terms_divided_by_max, axis=axis, keepdims=True
-        )
-
-    signs = jnp.sign(transformed_divided_by_max)
-    vals = jnp.log(jnp.abs(transformed_divided_by_max)) + max_val
-    return signs, vals
+        result = jnp.sum(shifted, axis=axis, keepdims=True)
+    absres = jnp.abs(result)
+    nsigns = result / absres if jnp.iscomplexobj(result) else result
+    nvals = jnp.log(absres) + max_val
+    return nsigns, nvals
 
 
 class Serial(nn.Module):
