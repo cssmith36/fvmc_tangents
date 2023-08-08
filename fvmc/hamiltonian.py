@@ -3,7 +3,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax.flatten_util import ravel_pytree
 
-from .utils import pdist, cdist
+from .utils import pdist, cdist, compose
 
 
 def calc_coulomb(charge, pos):
@@ -33,10 +33,10 @@ def calc_pe(elems, r, x):
 
 
 def r2c_grad(f, argnums=0):
-    grad_f_real = jax.grad(lambda *a, **kw: f(*a, **kw).real, argnums=argnums)
-    grad_f_imag = jax.grad(lambda *a, **kw: f(*a, **kw).imag, argnums=argnums)
+    f_splited = compose(lambda x: jnp.array([x.real, x.imag]), f)
     def grad_f(*args, **kwargs):
-        return grad_f_real(*args, **kwargs) + 1j * grad_f_imag(*args, **kwargs)
+        jac = jax.jacrev(f_splited, argnums=argnums)(*args, **kwargs)
+        return jax.tree_map(lambda x: jnp.array([1., 1j]) @ x, jac)
     return grad_f
 
 
