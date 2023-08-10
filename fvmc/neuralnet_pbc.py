@@ -26,26 +26,20 @@ def raw_features_pbc(r, x, latvec, n_freq):
     disp = displace_matrix(pos, pos)
     d_frac = disp @ invvec
     d_hsin = jnp.sin(jnp.pi * d_frac) @ latvec/jnp.pi
+    dist = jnp.linalg.norm(
+        d_hsin + jnp.eye(n_p)[..., None], 
+        keepdims=True, axis=-1) * (1.0 - jnp.eye(n_p)[..., None])
     freqs = jnp.arange(1, n_freq+1).reshape(-1, 1)
     radfreqs = 2 * jnp.pi * freqs
-    d_asin = jnp.sin(radfreqs * d_frac[:,:,None,:]) @ latvec/radfreqs
-    d_acos = jnp.cos(radfreqs * d_frac[:,:,None,:]) @ latvec/radfreqs
+    d_asin = jnp.sin(radfreqs * d_frac[:,:,None,:])
+    d_acos = jnp.cos(radfreqs * d_frac[:,:,None,:])
     d_freq = jnp.concatenate([
         d_asin, d_acos
     ], axis=-2).reshape(n_p, n_p, -1)
-    # calc dist and rescaling
-    dist = jnp.linalg.norm(
-        d_hsin + jnp.eye(n_p)[..., None],
-        keepdims=True,
-        axis=-1
-    )
-    h2_scaling = jnp.log(1 + dist) / dist
-    dmat = jnp.concatenate([
-        d_freq, 
-        dist * (1.0 - jnp.eye(n_p)[..., None])
+    h2 = jnp.concatenate([
+        d_freq, dist
     ], axis=-1)
-    h2 = dmat * h2_scaling
-    return h1, h2, dmat
+    return h1, h2, dist
 
 
 def gen_kidx(n_d, n_k, close_shell=True):
