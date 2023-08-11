@@ -154,6 +154,7 @@ class FermiNetPbc(FullWfn):
     type_embedding: int = 5
     jastrow_layers: int = 3
     spin_symmetry: bool = True
+    identical_h1_update: bool = False
     identical_h2_update: bool = False
 
     @nn.compact
@@ -183,6 +184,7 @@ class FermiNetPbc(FullWfn):
                 activation='tanh' if ii==0 else self.activation,
                 rescale_residual=self.rescale_residual,
                 spin_symmetry=self.spin_symmetry,
+                identical_h1_update=self.identical_h1_update,
                 identical_h2_update=self.identical_h2_update
             )
             h1, h2 = flayer(h1, h2)

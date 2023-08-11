@@ -80,6 +80,7 @@ class FermiLayer(nn.Module):
     activation: str = "gelu"
     rescale_residual: bool = True
     spin_symmetry: bool = True
+    identical_h1_update: bool = False
     identical_h2_update: bool = False
 
     @nn.compact
@@ -90,10 +91,13 @@ class FermiLayer(nn.Module):
         actv_fn = parse_activation(self.activation, rescale=self.rescale_residual)
         # Single update
         features = aggregate_features(h1, h2, self.split_sec, self.spin_symmetry)
-        f_nucl, f_elec = jnp.split(features, [n_nucl], axis=0)
-        h1_new_nucl = nn.Dense(self.single_size, param_dtype=_t_real)(f_nucl)
-        h1_new_elec = nn.Dense(self.single_size, param_dtype=_t_real)(f_elec)
-        h1_new = jnp.concatenate([h1_new_nucl, h1_new_elec], axis=0)
+        if self.identical_h1_update:
+            h1_new = nn.Dense(self.single_size, param_dtype=_t_real)(features)
+        else:
+            f_nucl, f_elec = jnp.split(features, [n_nucl], axis=0)
+            h1_new_nucl = nn.Dense(self.single_size, param_dtype=_t_real)(f_nucl)
+            h1_new_elec = nn.Dense(self.single_size, param_dtype=_t_real)(f_elec)
+            h1_new = jnp.concatenate([h1_new_nucl, h1_new_elec], axis=0)
         h1 = adaptive_residual(h1, actv_fn(h1_new), rescale=self.rescale_residual)
         # Pairwise update
         if self.identical_h2_update:
@@ -247,6 +251,7 @@ class FermiNet(FullWfn):
     type_embedding: int = 5
     jastrow_layers: int = 3
     spin_symmetry: bool = True
+    identical_h1_update: bool = False
     identical_h2_update: bool = False
 
     @nn.compact
@@ -276,6 +281,7 @@ class FermiNet(FullWfn):
                 activation='tanh' if ii==0 else self.activation,
                 rescale_residual=self.rescale_residual,
                 spin_symmetry=self.spin_symmetry,
+                identical_h1_update=self.identical_h1_update,
                 identical_h2_update=self.identical_h2_update
             )
             h1, h2 = flayer(h1, h2)
