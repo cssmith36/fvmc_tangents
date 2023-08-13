@@ -1,4 +1,5 @@
-from typing import Sequence, Tuple
+from typing import Sequence, Tuple, Callable
+from functools import partial
 
 import flax.linen as nn
 import jax
@@ -82,6 +83,7 @@ class FermiLayer(nn.Module):
     spin_symmetry: bool = True
     identical_h1_update: bool = False
     identical_h2_update: bool = False
+    kernel_init: Callable = nn.linear.default_kernel_init
 
     @nn.compact
     def __call__(self, h1, h2):
@@ -89,19 +91,20 @@ class FermiLayer(nn.Module):
         *elem_sec, n_up, n_dn = self.split_sec
         n_nucl = sum(elem_sec)
         actv_fn = parse_activation(self.activation, rescale=self.rescale_residual)
+        MyDense = partial(nn.Dense, param_dtype=_t_real, kernel_init=self.kernel_init)
         # Single update
         features = aggregate_features(h1, h2, self.split_sec, self.spin_symmetry)
         if self.identical_h1_update:
-            h1_new = nn.Dense(self.single_size, param_dtype=_t_real)(features)
+            h1_new = MyDense(self.single_size)(features)
         else:
             f_nucl, f_elec = jnp.split(features, [n_nucl], axis=0)
-            h1_new_nucl = nn.Dense(self.single_size, param_dtype=_t_real)(f_nucl)
-            h1_new_elec = nn.Dense(self.single_size, param_dtype=_t_real)(f_elec)
+            h1_new_nucl = MyDense(self.single_size)(f_nucl)
+            h1_new_elec = MyDense(self.single_size)(f_elec)
             h1_new = jnp.concatenate([h1_new_nucl, h1_new_elec], axis=0)
         h1 = adaptive_residual(h1, actv_fn(h1_new), rescale=self.rescale_residual)
         # Pairwise update
         if self.identical_h2_update:
-            h2_new = nn.Dense(self.pair_size, param_dtype=_t_real)(h2)
+            h2_new = MyDense(self.pair_size)(h2)
         else:
             pair_type = self._pair_type_idx()
             h2_new = jnp.zeros((n_particle, n_particle, self.pair_size), _t_real)
@@ -109,7 +112,7 @@ class FermiLayer(nn.Module):
                 ptidx = (pair_type == pt) 
                 # doing different dense for different pair types
                 h2_new = h2_new.at[ptidx, :].set(
-                    nn.Dense(self.pair_size, param_dtype=_t_real)(h2[ptidx, :])
+                    MyDense(self.pair_size)(h2[ptidx, :])
                 )
         h2 = adaptive_residual(h2, actv_fn(h2_new), rescale=self.rescale_residual)
         return h1, h2
