@@ -189,18 +189,21 @@ class FermiNetPbc(FullWfn):
             )
             h1, h2 = flayer(h1, h2)
 
+        h1n, h1e = jnp.split(h1, [n_nucl], axis=0)
+        h2e = h2[-n_elec:, -n_elec:]
+
         geminal_map = GeminalMap(self.spins, self.cell, 
                                  self.determinants)
-        geminals = geminal_map(h1[-n_elec:], h2[-n_elec:, -n_elec:])
+        geminals = geminal_map(h1e, h2e)
 
         envelope_map = PbcEnvelope(self.spins, self.cell,
                                    self.determinants, **self.envelope)
-        envelopes = envelope_map(h1[-n_elec:], x)
+        envelopes = envelope_map(h1e, x)
 
+        dweight_map = nn.Dense(self.determinants, param_dtype=_t_real)
+        det_weights = dweight_map(h1n.mean(0, keepdims=True)).T # [n_det, 1]
         dets = geminals * envelopes
         signs, logdets = jnp.linalg.slogdet(dets)
-        det_weights = self.param(
-            "det_weights", nn.initializers.ones, (self.determinants, 1))
         sign, logpsi = log_linear_exp(signs, logdets, det_weights, axis=0)
         sign, logpsi = sign[0], logpsi[0]
 
@@ -209,11 +212,11 @@ class FermiNetPbc(FullWfn):
             rescale=self.rescale_residual, param_dtype=_t_real)
         jastrow_weight = self.param(
             "jastrow_weights", nn.initializers.zeros, ())
-        logpsi += jastrow_weight * jastrow(h1).mean()
+        logpsi += jastrow_weight * jastrow(h1e).mean()
 
-        # electron-electron cusp condition
-        cusp = ElectronCusp((n_up, n_dn))
-        logpsi += cusp(d_ee=dmat[n_nucl:, n_nucl:, -1])
+        # electron-electron cusp condition (not in use)
+        # cusp = ElectronCusp((n_up, n_dn))
+        # logpsi += cusp(d_ee=dmat[n_nucl:, n_nucl:, -1])
         
         return sign, logpsi
     
