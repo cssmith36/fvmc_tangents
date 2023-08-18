@@ -97,13 +97,13 @@ class PbcEnvelope(nn.Module):
         else:
             x_up, x_dn = jnp.split(x_bf, [n_up], axis=0)
             x_delta = x_up[:, None, :] - x_dn # [n_up, n_dn, 3]
-            k_dot_x = x_delta @ kvecs.T # [n_up, n_dn, n_k]
+            k_dot_dx = x_delta @ kvecs.T # [n_up, n_dn, n_k]
             if self.use_complex:
-                eikx = jnp.exp(1j * k_dot_x)
+                eikx = jnp.exp(1j * k_dot_dx)
                 evlp = nn.Dense(self.n_out, False, param_dtype=_t_real)(eikx)
             else:
-                sinkx = jnp.sin(k_dot_x)
-                coskx = jnp.cos(k_dot_x)
+                sinkx = jnp.sin(k_dot_dx)
+                coskx = jnp.cos(k_dot_dx)
                 evlp = (nn.Dense(self.n_out, False, param_dtype=_t_real)(sinkx) 
                       + nn.Dense(self.n_out, False, param_dtype=_t_real)(coskx))
         # padding and transpose
