@@ -85,8 +85,8 @@ def cmult(x1, x2):
         + 1j * (x1.imag * x2.real + x1.real * x2.imag))
 
 
-def wrap_complex_linear(func):
-    def wrapped_func(x):
+def wrap_complex_linear(func: Callable[[Array], Array]):
+    def wrapped_func(x: Array):
         x_splited = jnp.stack([x.real, x.imag])
         f_splited = jax.vmap(func)(x_splited)
         return f_splited[0] + 1j * f_splited[1]

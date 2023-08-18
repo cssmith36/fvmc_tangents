@@ -100,8 +100,8 @@ def _make_repeat_dense_pattern(
         with_bias: bool,
         reshape: bool,
         in_dim: int = 13,
-        out_dim: int = 7,
-        extra_dims: Sequence[int] = tuple(range(8, 13))
+        out_dim: int = 5,
+        extra_dims: Sequence[int] = tuple(range(6, 13))
 ) -> kfac_jax.tag_graph_matcher.GraphPattern:
     example_fn = _dense_with_reshape if with_bias and reshape else _dense
     for i in range(batch_dims):
@@ -123,7 +123,7 @@ def _make_repeat_dense_pattern(
 
 GRAPH_PATTERNS = tuple(
     _make_repeat_dense_pattern(n, b, s)
-    for n in range(1, 4)
+    for n in range(1, 6)
     for b, s in ((True, True), (True, False), (False, False))
 ) + kfac_jax.tag_graph_matcher.DEFAULT_GRAPH_PATTERNS
 

@@ -65,7 +65,7 @@ class PbcEnvelope(nn.Module):
     n_k: Optional[int] = None
     close_shell: bool = True
     use_complex: bool = False
-    onebody_prod: bool = True
+    pair_type: str = 'product'
 
     @nn.compact
     def __call__(self, h1, x):
@@ -82,35 +82,71 @@ class PbcEnvelope(nn.Module):
         kvecs = 2 * jnp.pi * kpts @ recvec # [n_k, 3]
         # backflow x and inner product
         x_bf = x + nn.Dense(n_d, param_dtype=_t_real)(h1) # [n_el, 3]
-        if self.onebody_prod:
-            k_dot_x = x_bf @ kvecs.T # [n_el, n_k]
-            if self.use_complex:
-                eikx = jnp.exp(1j * k_dot_x)
-                ev_1b = wrap_complex_linear(
-                    nn.Dense(self.n_out, False, param_dtype=_t_real))(eikx)
-            else:
-                sinkx = jnp.sin(k_dot_x)
-                coskx = jnp.cos(k_dot_x)
-                ev_1b = (nn.Dense(self.n_out, False, param_dtype=_t_real)(sinkx) 
-                       + nn.Dense(self.n_out, False, param_dtype=_t_real)(coskx))
-            ev_up, ev_dn = jnp.split(ev_1b, [n_up], axis=0)
-            evlp = (ev_up[:, None, :] * ev_dn.conj())
-        else:
-            x_up, x_dn = jnp.split(x_bf, [n_up], axis=0)
-            x_delta = x_up[:, None, :] - x_dn # [n_up, n_dn, 3]
-            k_dot_dx = x_delta @ kvecs.T # [n_up, n_dn, n_k]
-            if self.use_complex:
-                eikx = jnp.exp(1j * k_dot_dx)
-                evlp = wrap_complex_linear(
-                    nn.Dense(self.n_out, False, param_dtype=_t_real))(eikx)
-            else:
-                sinkx = jnp.sin(k_dot_dx)
-                coskx = jnp.cos(k_dot_dx)
-                evlp = (nn.Dense(self.n_out, False, param_dtype=_t_real)(sinkx) 
-                      + nn.Dense(self.n_out, False, param_dtype=_t_real)(coskx))
-        # padding and transpose
+        evlp = self.pair_map(kvecs, x_bf)
+        # padding for unpaired spin (this shall be changed)
         base = jnp.ones((self.n_out, n_max, n_max), dtype=evlp.dtype)
-        return base.at[:, :n_up, :n_dn].set(evlp.transpose(2, 0, 1))
+        return base.at[:, :n_up, :n_dn].set(evlp)
+
+    def pair_map(self, k, x):
+        if self.pair_type.lower().startswith('prod'):
+            return self._prod_pair(k, x)
+        if self.pair_type.lower().startswith('diag'):
+            return self._diag_pair(k, x)
+        if self.pair_type.lower().startswith('gen'):
+            return self._general_pair(k, x)
+        raise ValueError(f'unknown pair_type: {self.pair_type}')
+
+    def _prod_pair(self, k, x):
+        n_up, n_dn = self.spins
+        k_dot_x = x @ k.T # [n_el, n_k]
+        linear_map = nn.Dense(self.n_out, False, param_dtype=_t_real)
+        # pw_kx: [n_elec, (2*)n_k]
+        if self.use_complex:
+            pw_kx = jnp.exp(1j * k_dot_x)
+            linear_map = wrap_complex_linear(linear_map)
+        else:
+            pw_kx = jnp.concatenate([jnp.sin(k_dot_x), jnp.cos(k_dot_x)], -1)
+        # ev_1b: [n_elec, n_out]
+        ev_1b = linear_map(pw_kx)
+        ev_up, ev_dn = jnp.split(ev_1b, [n_up], axis=0)
+        evlp = (ev_up[:, None, :] * ev_dn.conj())
+        return evlp.transpose(2, 0, 1) # [n_out, n_up, n_dn]
+    
+    def _diag_pair(self, k, x):
+        n_up, n_dn = self.spins
+        x_up, x_dn = jnp.split(x, [n_up], axis=0)
+        x_delta = x_up[:, None, :] - x_dn # [n_up, n_dn, 3]
+        k_dot_dx = x_delta @ k.T # [n_up, n_dn, n_k]
+        linear_map = nn.Dense(self.n_out, False, param_dtype=_t_real)
+        # pw_kx: [n_up, n_dn, n_k]
+        if self.use_complex:
+            pw_kx = jnp.exp(1j * k_dot_dx)
+            linear_map = wrap_complex_linear(linear_map)
+        else:
+            pw_kx = jnp.concatenate([jnp.sin(k_dot_dx), jnp.cos(k_dot_dx)], -1)
+        # evlp: [n_up, n_dn, n_out]
+        evlp = linear_map(pw_kx)
+        return evlp.transpose(2, 0, 1) # [n_out, n_up, n_dn]
+    
+    def _general_pair(self, k, x):
+        n_up, n_dn = self.spins
+        n_f = k.shape[0] if self.use_complex else k.shape[0] * 2
+        k_dot_x = x @ k.T # [n_el, n_k]
+        linear_map = nn.Dense(self.n_out * n_f, False, param_dtype=_t_real)
+        # pw_kx: [n_elec, (2*)n_k]
+        if self.use_complex:
+            pw_kx = jnp.exp(1j * k_dot_x)
+            linear_map = wrap_complex_linear(linear_map)
+        else:
+            pw_kx = jnp.concatenate([jnp.sin(k_dot_x), jnp.cos(k_dot_x)], -1)
+        ev_1b = linear_map(pw_kx).reshape(n_up+n_dn, self.n_out, n_f)
+        ev_up, ev_dn = jnp.split(ev_1b, [n_up], axis=0)
+        # ev_pair: [n_out, n_up, n_dn, (2*)n_k]
+        ev_pair = jnp.einsum('iak,jak->aijk', ev_up, ev_dn.conj())
+        diag_v = self.param("v", nn.initializers.normal(0.01), (n_f, 1))
+        evlp = (ev_pair @ diag_v if not self.use_complex else
+                wrap_complex_linear(lambda x: x @ diag_v)(ev_pair))
+        return evlp.squeeze(-1) # [n_out, n_up, n_dn]
 
 
 class GeminalMap(nn.Module):
