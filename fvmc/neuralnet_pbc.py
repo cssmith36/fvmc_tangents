@@ -8,7 +8,7 @@ import numpy as onp
 
 from .utils import (Array, _t_real, adaptive_residual, build_mlp,
                     collect_elems, displace_matrix, fix_init, log_linear_exp,
-                    parse_activation)
+                    parse_activation, wrap_complex_linear)
 from .wavefunction import FullWfn
 from .neuralnet import FermiLayer, ElectronCusp
 
@@ -86,7 +86,8 @@ class PbcEnvelope(nn.Module):
             k_dot_x = x_bf @ kvecs.T # [n_el, n_k]
             if self.use_complex:
                 eikx = jnp.exp(1j * k_dot_x)
-                ev_1b = nn.Dense(self.n_out, False, param_dtype=_t_real)(eikx)
+                ev_1b = wrap_complex_linear(
+                    nn.Dense(self.n_out, False, param_dtype=_t_real))(eikx)
             else:
                 sinkx = jnp.sin(k_dot_x)
                 coskx = jnp.cos(k_dot_x)
@@ -100,7 +101,8 @@ class PbcEnvelope(nn.Module):
             k_dot_dx = x_delta @ kvecs.T # [n_up, n_dn, n_k]
             if self.use_complex:
                 eikx = jnp.exp(1j * k_dot_dx)
-                evlp = nn.Dense(self.n_out, False, param_dtype=_t_real)(eikx)
+                evlp = wrap_complex_linear(
+                    nn.Dense(self.n_out, False, param_dtype=_t_real))(eikx)
             else:
                 sinkx = jnp.sin(k_dot_dx)
                 coskx = jnp.cos(k_dot_dx)

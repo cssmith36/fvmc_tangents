@@ -85,6 +85,14 @@ def cmult(x1, x2):
         + 1j * (x1.imag * x2.real + x1.real * x2.imag))
 
 
+def wrap_complex_linear(func):
+    def wrapped_func(x):
+        x_splited = jnp.stack([x.real, x.imag])
+        f_splited = jax.vmap(func)(x_splited)
+        return f_splited[0] + 1j * f_splited[1]
+    return wrapped_func
+
+
 def displace_matrix(xa, xb, disp_fn=None):
     if disp_fn is None:
         return jnp.expand_dims(xa, -2) - jnp.expand_dims(xb, -3)
