@@ -90,8 +90,8 @@ def build_eval_local_full(model, elems, cell=None):
 
 
 def build_eval_total(eval_local_fn, energy_clipping=None, 
-                     center_shifting=False, pmap_axis_name=PMAP_AXIS_NAME, 
-                     use_weighted=False):
+                     clip_from_median=False, center_shifting=False, 
+                     pmap_axis_name=PMAP_AXIS_NAME, use_weighted=False):
     """Create a function that evaluates quantities on the whole batch of samples.
 
     The created function will take paramters and sampled data as input,
@@ -105,6 +105,9 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
             outside [E_t - n D, E_t + n D], where E_t is the mean local energy, n is
             this value and D the mean absolute deviation of the local energies.
             Defaults to None (no clipping).
+        clip_from_median (bool): If true, center the clipping window at the median rather
+            than the mean. Potentially expensive in multi-host training, but more
+            accurate/robust to outliers. Defaults to False.
         center_shifting (bool): If True, shift the average local energy so that
             the mean difference of the batch is always zero. Will only be useful with
             effective local energy clipping. Defaults to True.
@@ -121,7 +124,8 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
     if use_weighted:
         return build_eval_total_weighted(
             eval_local_fn, 
-            energy_clipping, 
+            energy_clipping,
+            clip_from_median,
             center_shifting, 
             pmap_axis_name)
 
@@ -158,8 +162,10 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
         # clipping the local energy (for making the loss)
         eclip = eloc
         if energy_clipping and energy_clipping > 0:
+            ecenter = (jnp.median(paxis.all_gather(eloc.real)) 
+                       if clip_from_median else etot)
             tv = paxis.all_nanmean(jnp.abs(eloc - etot))
-            eclip = clip_around(eloc, etot, energy_clipping * tv, stop_gradient=True)
+            eclip = clip_around(eloc, ecenter, energy_clipping * tv, stop_gradient=True)
         # shift the constant and get diff
         ebar = paxis.all_nanmean(eclip) if center_shifting else etot
         ediff = lax.stop_gradient(eclip - ebar).conj()
@@ -173,7 +179,8 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
 
 
 def build_eval_total_weighted(eval_local_fn, energy_clipping=None, 
-                              center_shifting=True, pmap_axis_name=PMAP_AXIS_NAME):
+                              clip_from_median=False, center_shifting=True, 
+                              pmap_axis_name=PMAP_AXIS_NAME):
     """Create a function that evaluates quantities on the whole batch of samples.
 
     The created function will take paramters and sampled data as input,
@@ -187,6 +194,9 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
             outside [E_t - n D, E_t + n D], where E_t is the mean local energy, n is
             this value and D the mean absolute deviation of the local energies.
             Defaults to None (no clipping).
+        clip_from_median (bool): If true, center the clipping window at the median rather
+            than the mean. Potentially expensive in multi-host training, but more
+            accurate/robust to outliers. Defaults to False.
         center_shifting (bool): If True, shift the average local energy so that
             the mean difference of the batch is always zero. Will only be useful with
             effective local energy clipping. Defaults to True.
@@ -238,8 +248,10 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
         # clipping the local energy (for making the loss)
         eclip = eloc
         if energy_clipping and energy_clipping > 0:
+            ecenter = (jnp.median(paxis.all_gather(eloc.real)) 
+                       if clip_from_median else etot)
             tv = paxis.all_nanaverage(jnp.abs(eloc - etot), rel_w)
-            eclip = clip_around(eloc, etot, energy_clipping * tv, stop_gradient=True)
+            eclip = clip_around(eloc, ecenter, energy_clipping * tv, stop_gradient=True)
         # make the conjugated term (with stopped gradient)
         eclip_c, sign_c, logf_c = map(
             lambda x: lax.stop_gradient(x.conj()), 

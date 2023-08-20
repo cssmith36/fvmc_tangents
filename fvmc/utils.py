@@ -423,6 +423,7 @@ pmax_if_pmap = wrap_if_pmap(lax.pmax)
 pmin_if_pmap = wrap_if_pmap(lax.pmin)
 psum_if_pmap = wrap_if_pmap(lax.psum)
 pmean_if_pmap = wrap_if_pmap(lax.pmean)
+all_gather_if_pmap = wrap_if_pmap(lax.all_gather)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -431,7 +432,8 @@ class PmapAxis:
     def __post_init__(self):
         for nm, fn in (("vmap", jax.vmap), ("pmap", jax.pmap),
                        ("pmax", pmax_if_pmap), ("pmin", pmin_if_pmap),
-                       ("psum", psum_if_pmap), ("pmean", pmean_if_pmap)):
+                       ("psum", psum_if_pmap), ("pmean", pmean_if_pmap),
+                       ("all_gather", all_gather_if_pmap)):
             object.__setattr__(self, nm, partial(fn, axis_name=self.name))
         for nm in ("max", "min", "sum", "mean"):
             jnp_fn = getattr(jnp, nm)
