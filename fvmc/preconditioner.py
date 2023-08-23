@@ -24,10 +24,10 @@ def scale_by_fisher_inverse(
         log_prob_fn: Callable,
         damping: float = 1e-3,
         centered: bool = True,
+        direct_inverse: bool = False,
         maxiter: Optional[int] = None,
         mixing_factor: float = 0.,
         use_weighted: bool = False,
-        direct_inverse: bool = False,
         pmap_axis_name: str = PMAP_AXIS_NAME,
 ) -> GradientTransformationExtraArgs:
     r"""build a preconditioner apply inverse fisher to the grad.

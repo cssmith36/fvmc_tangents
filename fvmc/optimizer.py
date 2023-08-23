@@ -268,11 +268,11 @@ def build_optimizer(
         from optax._src import alias as optax_alias
 
         using_sr = name.lower() in ("sr", "ngd")
-        options = {**SR_DEFAULTS, **kwargs} if using_sr else kwargs
         clip_transform = (optax.adaptive_grad_clip(grad_clipping) 
                           if grad_clipping else optax.identity())
         if using_sr:
             assert log_prob_func is not None
+            options = {**SR_DEFAULTS, **kwargs}
             dname = options.pop("descender", None)
             momentum = options.pop("momentum", 0.0)
             precond = scale_by_fisher_inverse(
@@ -288,7 +288,7 @@ def build_optimizer(
         else:
             opt_factory = lambda learning_rate: optax.chain(
                 clip_transform,
-                getattr(optax_alias, name)(learning_rate, **options))
+                getattr(optax_alias, name)(learning_rate, **kwargs))
 
         optax_optimizer = optax.inject_hyperparams(opt_factory)(lr_schedule)
         
