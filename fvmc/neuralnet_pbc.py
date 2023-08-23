@@ -132,14 +132,16 @@ class PbcEnvelope(nn.Module):
         n_up, n_dn = self.spins
         n_f = k.shape[0] if self.use_complex else k.shape[0] * 2
         k_dot_x = x @ k.T # [n_el, n_k]
-        linear_map = nn.Dense(self.n_out * n_f, False, param_dtype=_t_real)
+        linear_map = nn.Dense(self.n_out * n_f, False, param_dtype=_t_real,
+                              kernel_init=nn.initializers.zeros)
         # pw_kx: [n_elec, (2*)n_k]
         if self.use_complex:
             pw_kx = jnp.exp(1j * k_dot_x)
             linear_map = wrap_complex_linear(linear_map)
         else:
             pw_kx = jnp.concatenate([jnp.sin(k_dot_x), jnp.cos(k_dot_x)], -1)
-        ev_1b = linear_map(pw_kx).reshape(n_up+n_dn, self.n_out, n_f)
+        ev_1b = (linear_map(pw_kx).reshape(n_up+n_dn, self.n_out, n_f)
+                 + pw_kx[:, None, :])
         ev_up, ev_dn = jnp.split(ev_1b, [n_up], axis=0)
         # ev_pair: [n_out, n_up, n_dn, (2*)n_k]
         ev_pair = jnp.einsum('iak,jak->aijk', ev_up, ev_dn.conj())
