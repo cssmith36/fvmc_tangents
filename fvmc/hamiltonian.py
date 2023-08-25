@@ -36,7 +36,7 @@ def r2c_grad(f, argnums=0):
     f_splited = compose(lambda x: jnp.array([x.real, x.imag]), f)
     def grad_f(*args, **kwargs):
         jac = jax.jacrev(f_splited, argnums=argnums)(*args, **kwargs)
-        return jax.tree_map(lambda x: jnp.array([1., 1j]) @ x, jac)
+        return jax.tree_map(lambda x: x[0] + 1j * x[1], jac)
     return grad_f
 
 
