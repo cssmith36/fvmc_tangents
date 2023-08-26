@@ -93,7 +93,7 @@ class EwaldSum:
     def recip_part(self, charge, pos):
         g_dot_r = self.gpoints @ pos.T # [n_gpoints, n_particle]
         sfactor = jnp.exp(1j * g_dot_r) @ charge # [n_gpoints,]
-        e_recip = self.gweight @ (jnp.abs(sfactor) ** 2)
+        e_recip = self.gweight @ (sfactor * sfactor.conj())
         return e_recip
     
     def energy(self, charge, pos):
