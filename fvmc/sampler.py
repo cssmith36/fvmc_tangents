@@ -267,7 +267,7 @@ def build_blackjax(logdens_fn, shape_or_init, kernel="nuts", grad_clipping=None,
     from blackjax import hmc, nuts
     sample_shape = _extract_sample_shape(shape_or_init)
     xsize, unravel = ravel_shape(sample_shape)
-    inv_mass = 0.5 * jnp.ones(xsize)
+    inv_mass = jnp.asarray(kwargs.pop("inverse_mass_matrix", 0.5 * jnp.ones(xsize)))
     ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
     kmodule = {"hmc": hmc, "nuts": nuts}[kernel]
 
@@ -308,18 +308,19 @@ def gen_leapfrog(potential_fn, dt, steps, with_carry=True):
 
     def leapfrog_carry(q, p, g, v):
         # p for momentom and q for position
-        # f for force and v for potential
+        # g for grad (neg force) and v for potential
         # simple Euler integration step
         def int_step(carry, _):
             q, p = carry
             q += dt * p
-            p -= dt * pot_and_grad(q)[1]
+            p -= dt * pot_and_grad(q)[1].conj()
             return (q, p), None
         # leapfrog by shifting half step
         p -= 0.5 * dt * g # first half p
         (q, p), _ = lax.scan(int_step, (q, p), None, length=steps-1)
         q += dt * p # final whole step update of q
-        v, g = pot_and_grad(q) 
+        v, g = pot_and_grad(q)
+        g = g.conj() # for potential complex variables
         p -= 0.5 * dt * g # final half p
         return q, p, g, v
 
