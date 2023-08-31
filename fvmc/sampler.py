@@ -6,6 +6,7 @@ import jax
 import numpy as onp
 from jax import lax
 from jax import numpy as jnp
+from jax.flatten_util import ravel_pytree
 
 from .utils import (Array, ArrayTree, PyTree, adaptive_split, clip_gradient,
                     ravel_shape, tree_map, tree_where, parse_spin)
@@ -85,7 +86,7 @@ def build_conf_init_fn(elems, nuclei, n_elec,
             return init_x
         else:
             init_r = nuclei + jax.random.normal(key, nuclei.shape) * sigma_r
-            return init_r, init_x
+            return [init_r, init_x]
     
     return init_fn
 
@@ -234,20 +235,24 @@ def build_langevin(logdens_fn, shape_or_init, tau=0.1, steps=10, grad_clipping=N
     return MCSampler(sample, init, refresh)
 
 
-def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1., grad_clipping=None):
+def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1., mass=1., grad_clipping=None):
     sample_shape = _extract_sample_shape(shape_or_init)
     xsize, unravel = ravel_shape(sample_shape)
     ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
     logd_and_grad = jax.value_and_grad(ravel_logd, 1)
+    mass = _align_vector(mass, sample_shape)
+    scale = jnp.sqrt(mass)
 
     def sample(key, params, state):
         gkey, ukey = jax.random.split(key)
         q1, g1, ld1 = state
+        q1s, g1s = q1 * scale, g1 / scale # scaled coordinates to account for mass
         p1 = jax.random.normal(gkey, shape=q1.shape)
-        potential_fn = lambda x: -ravel_logd(params, x)
+        # pot fn take scaled q as input
+        potential_fn = lambda xs: -ravel_logd(params, xs / scale)
         leapfrog = gen_leapfrog(potential_fn, dt, round(length / dt), True)
-        q2, p2, f2, v2 = leapfrog(q1, p1, -g1, -ld1)
-        g2, ld2 = -f2, -v2
+        q2s, p2, f2s, v2 = leapfrog(q1s, p1, -g1s, -ld1)
+        q2, g2, ld2 =q2s / scale, -f2s * scale, -v2
         ratio = (logd_gaussian(-p2).sum(-1)+ld2) - (logd_gaussian(p1).sum(-1)+ld1)
         (qn, gn, ldn), accepted = mh_select(ukey, ratio, state, (q2, g2, ld2))
         info = {"is_accepted": accepted}
@@ -367,3 +372,12 @@ def _gen_init_from_refresh(refresh_fn, shape_or_init):
         return refresh_fn((sample,), params)
 
     return init
+
+
+def _align_vector(vec, sample_shape):
+    xsize, unravel = ravel_shape(sample_shape)
+    vec_ = ravel_pytree(vec)[0]
+    vec = (vec_ if vec_.size in (1, xsize) else
+           ravel_pytree(jax.tree_map(jnp.broadcast_to, vec, sample_shape))[0])
+    assert vec.shape in ((1,), (xsize,))
+    return vec
