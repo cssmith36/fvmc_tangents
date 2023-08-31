@@ -105,16 +105,22 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
         ansatz_cfg = ConfigDict(ansatz_cfg)
         # ansatz = build_jastrow_slater(elems, n_elec, nuclei,
         #     dynamic_nuclei=fully_quantum, **ansatz_cfg)
-        if cell is None:
-            ansatz = FermiNet(elems=elems, spins=n_elec, **ansatz_cfg)
-        else:
-            ansatz = FermiNetPbc(elems=elems, spins=n_elec, cell=cell, **ansatz_cfg)
         if fully_quantum:
-            nuclei_ansatz = (NucleiGaussianSlater(nuclei, 0.1) if cell is None
-                             else NucleiGaussianSlaterPbc(cell, nuclei, 0.1))
-            ansatz = ProductModel([ansatz, nuclei_ansatz])
+            if cell is None:
+                elec_ansatz = FermiNet(elems=elems, spins=n_elec, **ansatz_cfg)
+                nuclei_ansatz = NucleiGaussianSlater(nuclei, 0.1)
+                ansatz = ProductModel([elec_ansatz, nuclei_ansatz])
+            else:
+                nuclei_part = NucleiGaussianSlaterPbc(cell, nuclei, 0.1)
+                ansatz = FermiNetPbc(elems=elems, spins=n_elec, cell=cell,
+                                     nuclei_module=nuclei_part, **ansatz_cfg)
         else:
-            ansatz = FixNuclei(ansatz, nuclei)
+            if cell is None:
+                raw_ansatz = FermiNet(elems=elems, spins=n_elec, **ansatz_cfg) 
+            else:
+                raw_ansatz = FermiNetPbc(elems=elems, spins=n_elec, 
+                                         cell=cell, **ansatz_cfg)
+            ansatz = FixNuclei(raw_ansatz, nuclei)
     log_prob_fn = log_prob_from_model(ansatz)
 
     # make estimators

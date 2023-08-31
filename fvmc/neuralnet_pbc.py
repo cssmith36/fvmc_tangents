@@ -196,6 +196,7 @@ class FermiNetPbc(FullWfn):
     spin_symmetry: bool = True
     identical_h1_update: bool = False
     identical_h2_update: bool = False
+    nuclei_module: Optional[FullWfn] = None
 
     @nn.compact
     def __call__(self, r: Array, x: Array) -> Array:
@@ -254,10 +255,17 @@ class FermiNetPbc(FullWfn):
             "jastrow_weights", nn.initializers.zeros, ())
         logpsi += jastrow_weight * jastrow(h1e).mean()
 
+        # nuclei module with backflowed r
+        r_bf = r + nn.Dense(r.shape[-1], param_dtype=_t_real,
+                            kernel_init=nn.initializers.zeros)(h1n)
+        nuc_sign, nuc_logpsi = self.nuclei_module(r_bf, x)
+        sign *= nuc_sign
+        logpsi += nuc_logpsi
+
         # electron-electron cusp condition (not in use)
         # cusp = ElectronCusp((n_up, n_dn))
         # logpsi += cusp(d_ee=dmat[n_nucl:, n_nucl:, -1])
-        
+
         return sign, logpsi
     
 
