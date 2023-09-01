@@ -84,6 +84,13 @@ def test_sampler_distribution(name):
 
 
 @pytest.mark.slow
+def test_sampler_hmc_jittered():
+    sampler = choose_sampler_builder("hmc")(_logprob_fn, _xshape, jittered=True)
+    sampler = make_multistep(make_batched(sampler, _nchain, concat=False), _nstep, concat=False)
+    shared_sampler_test(sampler, jit=True)
+
+
+@pytest.mark.slow
 def test_sampler_chained():
     mcmc = make_test_sampler("mcmc")
     mala = make_test_sampler("mala")

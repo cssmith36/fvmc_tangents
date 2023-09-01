@@ -235,7 +235,8 @@ def build_langevin(logdens_fn, shape_or_init, tau=0.1, steps=10, grad_clipping=N
     return MCSampler(sample, init, refresh)
 
 
-def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1., mass=1., grad_clipping=None):
+def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1., 
+                      mass=1., jittered=False, grad_clipping=None):
     sample_shape = _extract_sample_shape(shape_or_init)
     xsize, unravel = ravel_shape(sample_shape)
     ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
@@ -244,13 +245,14 @@ def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1., mass=1., gra
     scale = jnp.sqrt(mass)
 
     def sample(key, params, state):
-        gkey, ukey = jax.random.split(key)
+        gkey, ukey, jkey = jax.random.split(key, 3)
         q1, g1, ld1 = state
         q1s, g1s = q1 * scale, g1 / scale # scaled coordinates to account for mass
         p1 = jax.random.normal(gkey, shape=q1.shape)
         # pot fn take scaled q as input
         potential_fn = lambda xs: -ravel_logd(params, xs / scale)
-        leapfrog = gen_leapfrog(potential_fn, dt, round(length / dt), True)
+        jlength = jax.random.uniform(jkey) * length if jittered else length
+        leapfrog = gen_leapfrog(potential_fn, dt, round(jlength / dt), True)
         q2s, p2, f2s, v2 = leapfrog(q1s, p1, -g1s, -ld1)
         q2, g2, ld2 =q2s / scale, -f2s * scale, -v2
         ratio = (logd_gaussian(-p2).sum(-1)+ld2) - (logd_gaussian(p1).sum(-1)+ld1)
@@ -315,14 +317,14 @@ def gen_leapfrog(potential_fn, dt, steps, with_carry=True):
         # p for momentom and q for position
         # g for grad (neg force) and v for potential
         # simple Euler integration step
-        def int_step(carry, _):
+        def int_step(i, carry):
             q, p = carry
             q += dt * p
             p -= dt * pot_and_grad(q)[1].conj()
-            return (q, p), None
+            return (q, p)
         # leapfrog by shifting half step
         p -= 0.5 * dt * g # first half p
-        (q, p), _ = lax.scan(int_step, (q, p), None, length=steps-1)
+        (q, p) = lax.fori_loop(1, steps, int_step, (q, p))
         q += dt * p # final whole step update of q
         v, g = pot_and_grad(q)
         g = g.conj() # for potential complex variables
