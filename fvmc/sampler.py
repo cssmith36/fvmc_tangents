@@ -8,8 +8,9 @@ from jax import lax
 from jax import numpy as jnp
 from jax.flatten_util import ravel_pytree
 
-from .utils import (Array, ArrayTree, PyTree, adaptive_split, clip_gradient,
-                    ravel_shape, tree_map, tree_where, parse_spin)
+from .utils import (PMAP_AXIS_NAME, Array, ArrayTree, PmapAxis, PyTree,
+                    adaptive_split, clip_gradient, parse_spin, ravel_shape,
+                    tree_map, tree_where)
 from .wavefunction import nn
 
 KeyArray = Array
@@ -93,18 +94,22 @@ def build_conf_init_fn(elems, nuclei, n_elec,
 
 ##### Below are sampler transformations #####
 
-def make_batched(sampler: MCSampler, n_batch: int, concat: bool = False):
+MC_BATCH_AXIS_NAME = "_mc_batch_axis"
+
+def make_batched(sampler: MCSampler, n_batch: int, concat: bool = False,
+                 vmap_axis_name: str = MC_BATCH_AXIS_NAME):
     sample_fn, init_fn, refresh_fn = sampler
+    vaxis = PmapAxis(vmap_axis_name)
     def sample(key, params, state):
         vkey = jax.random.split(key, n_batch)
-        new_state, *res = jax.vmap(sample_fn, (0, None, 0))(vkey, params, state)
+        new_state, *res = vaxis.vmap(sample_fn, (0, None, 0))(vkey, params, state)
         if concat:
             res = tree_map(jnp.concatenate, res)
         return new_state, *res
     def init(key, params):
         vkey = jax.random.split(key, n_batch)
-        return jax.vmap(init_fn, (0, None))(vkey, params)
-    refresh = jax.vmap(refresh_fn, (0, None))
+        return vaxis.vmap(init_fn, (0, None))(vkey, params)
+    refresh = vaxis.vmap(refresh_fn, (0, None))
     return MCSampler(sample, init, refresh)
 
 
@@ -236,7 +241,13 @@ def build_langevin(logdens_fn, shape_or_init, tau=0.1, steps=10, grad_clipping=N
 
 
 def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1., 
-                      mass=1., jittered=False, grad_clipping=None):
+                      mass=1., jittered=False, grad_clipping=None,
+                      vmap_axis_name=MC_BATCH_AXIS_NAME, 
+                      pmap_axis_name=PMAP_AXIS_NAME):
+    # initialize pmap and vmap utilities
+    vaxis = PmapAxis(vmap_axis_name)
+    paxis = PmapAxis(pmap_axis_name)
+    # prepare functions and constants
     sample_shape = _extract_sample_shape(shape_or_init)
     xsize, unravel = ravel_shape(sample_shape)
     ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
@@ -244,29 +255,48 @@ def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1.,
     mass = _align_vector(mass, sample_shape)
     scale = jnp.sqrt(mass)
 
+    def _jitter_length(extra_state):
+        if not jittered:
+            return length, extra_state
+        jkey, subkey = jax.random.split(extra_state[0])
+        jlength = jax.random.uniform(subkey) * length
+        return jlength, (jkey, *extra_state[1:])
+
     def sample(key, params, state):
-        gkey, ukey, jkey = jax.random.split(key, 3)
-        q1, g1, ld1 = state
-        q1s, g1s = q1 * scale, g1 / scale # scaled coordinates to account for mass
+        gkey, ukey = jax.random.split(key)
+        q1, g1, ld1, *extras = state
+        # scaled coordinates to account for mass
+        q1s, g1s = q1 * scale, g1 / scale
         p1 = jax.random.normal(gkey, shape=q1.shape)
         # pot fn take scaled q as input
         potential_fn = lambda xs: -ravel_logd(params, xs / scale)
-        jlength = jax.random.uniform(jkey) * length if jittered else length
+        # determine integration length
+        jlength, extras = _jitter_length(extras)
         leapfrog = gen_leapfrog(potential_fn, dt, round(jlength / dt), True)
         q2s, p2, f2s, v2 = leapfrog(q1s, p1, -g1s, -ld1)
-        q2, g2, ld2 =q2s / scale, -f2s * scale, -v2
+        # scale back the coordinates for output
+        q2, g2, ld2 = q2s / scale, -f2s * scale, -v2
         ratio = (logd_gaussian(-p2).sum(-1)+ld2) - (logd_gaussian(p1).sum(-1)+ld1)
-        (qn, gn, ldn), accepted = mh_select(ukey, ratio, state, (q2, g2, ld2))
+        (qn, gn, ldn), accepted = mh_select(ukey, ratio, state[:3], (q2, g2, ld2))
         info = {"is_accepted": accepted}
-        return (qn, gn, ldn), (unravel(qn), ldn), info
+        return (qn, gn, ldn, *extras), (unravel(qn), ldn), info
 
     def refresh(state, params):
         sample = state[0]
+        extras = state[3:]
         ld_new, grads_new = logd_and_grad(params, sample)
-        return (sample, grads_new.conj(), ld_new)
+        return (sample, grads_new.conj(), ld_new, *extras)
 
-    init = _gen_init_from_refresh(refresh, shape_or_init)
-    
+    raw_init = _gen_init_from_refresh(refresh, shape_or_init)
+    def init(key, params):
+        key, jkey = jax.random.split(key)
+        raw_state = raw_init(key, params)
+        extras = []
+        if jittered:
+            extras.append(paxis.pmin(vaxis.pmin(jkey)))
+        state = (*raw_state, *extras)
+        return state
+
     return MCSampler(sample, init, refresh)
 
 
