@@ -79,6 +79,7 @@ class FermiLayer(nn.Module):
     pair_size: int
     split_sec: Sequence[int]
     activation: str = "gelu"
+    h2_prod_h1: bool = False
     rescale_residual: bool = True
     spin_symmetry: bool = True
     identical_h1_update: bool = False
@@ -93,7 +94,8 @@ class FermiLayer(nn.Module):
         actv_fn = parse_activation(self.activation, rescale=self.rescale_residual)
         MyDense = partial(nn.Dense, param_dtype=_t_real, kernel_init=self.kernel_init)
         # Single update
-        features = aggregate_features(h1, h2, self.split_sec, self.spin_symmetry)
+        h2p = h2 * MyDense(self.pair_size)(h1) if self.h2_prod_h1 else h2
+        features = aggregate_features(h1, h2p, self.split_sec, self.spin_symmetry)
         if self.identical_h1_update:
             h1_new = MyDense(self.single_size)(features)
         else:
@@ -250,6 +252,7 @@ class FermiNet(FullWfn):
     determinants: int = 16
     full_det: bool = True
     activation: str = "gelu"
+    h2_prod_h1: bool = False
     rescale_residual: bool = True
     type_embedding: int = 5
     jastrow_layers: int = 3
@@ -282,6 +285,7 @@ class FermiNet(FullWfn):
                 pair_size=pdim,
                 split_sec=split_sec,
                 activation='tanh' if ii==0 else self.activation,
+                h2_prod_h1=False if ii==0 else self.h2_prod_h1,
                 rescale_residual=self.rescale_residual,
                 spin_symmetry=self.spin_symmetry,
                 identical_h1_update=self.identical_h1_update,

@@ -190,6 +190,7 @@ class FermiNetPbc(FullWfn):
     determinants: int = 4
     envelope: dict = dataclasses.field(default_factory=dict)
     activation: str = "gelu"
+    h2_prod_h1: bool = False
     rescale_residual: bool = True
     type_embedding: int = 5
     jastrow_layers: int = 3
@@ -223,6 +224,7 @@ class FermiNetPbc(FullWfn):
                 pair_size=pdim,
                 split_sec=split_sec,
                 activation='tanh' if ii==0 else self.activation,
+                h2_prod_h1=False if ii==0 else self.h2_prod_h1,
                 rescale_residual=self.rescale_residual,
                 spin_symmetry=self.spin_symmetry,
                 identical_h1_update=self.identical_h1_update,
