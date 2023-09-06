@@ -11,9 +11,24 @@ from .test_wavefunction import make_collapse_conf
 _key0 = jax.random.PRNGKey(0)
 
 
-_conf1 = {"full_det": False, "identical_h2_update": False, "spin_symmetry": False}
-_conf2 = {"full_det": False, "identical_h2_update": False, "spin_symmetry": True}
-_conf3 = {"full_det": True, "identical_h2_update": True, "spin_symmetry": True}
+_conf1 = {"full_det": False, 
+          "fermilayer": {
+              "h2_convolution": False,
+              "identical_h1_update": False,
+              "identical_h2_update": False, 
+              "spin_symmetry": False}}
+_conf2 = {"full_det": False, 
+          "fermilayer": {
+              "h2_convolution": False,
+              "identical_h1_update": True,
+              "identical_h2_update": False, 
+              "spin_symmetry": True}}
+_conf3 = {"full_det": True, 
+          "fermilayer": {
+              "h2_convolution": True,
+              "identical_h1_update": False,
+              "identical_h2_update": True, 
+              "spin_symmetry": True}}
 
 
 @pytest.fixture(scope='module', params=[_conf1, _conf2, _conf3])

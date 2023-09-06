@@ -1,3 +1,4 @@
+import dataclasses
 from typing import Sequence, Tuple, Callable
 from functools import partial
 
@@ -79,11 +80,11 @@ class FermiLayer(nn.Module):
     pair_size: int
     split_sec: Sequence[int]
     activation: str = "gelu"
-    h2_prod_h1: bool = False
     rescale_residual: bool = True
     spin_symmetry: bool = True
+    h2_convolution: bool = True
     identical_h1_update: bool = False
-    identical_h2_update: bool = False
+    identical_h2_update: bool = True
     kernel_init: Callable = nn.linear.default_kernel_init
 
     @nn.compact
@@ -94,7 +95,7 @@ class FermiLayer(nn.Module):
         actv_fn = parse_activation(self.activation, rescale=self.rescale_residual)
         MyDense = partial(nn.Dense, param_dtype=_t_real, kernel_init=self.kernel_init)
         # Single update
-        h2p = h2 * MyDense(self.pair_size)(h1) if self.h2_prod_h1 else h2
+        h2p = h2 * MyDense(self.pair_size)(h1) if self.h2_convolution else h2
         features = aggregate_features(h1, h2p, self.split_sec, self.spin_symmetry)
         if self.identical_h1_update:
             h1_new = MyDense(self.single_size)(features)
@@ -248,17 +249,14 @@ class ElectronCusp(nn.Module):
 class FermiNet(FullWfn):
     elems: Sequence[int]
     spins: tuple[int, int]
-    hidden_dims: Sequence[Tuple[int, int]] = ((64, 16),)*4
     determinants: int = 16
     full_det: bool = True
+    hidden_dims: Sequence[Tuple[int, int]] = ((64, 16),)*4
     activation: str = "gelu"
-    h2_prod_h1: bool = False
     rescale_residual: bool = True
+    fermilayer: dict = dataclasses.field(default_factory=dict)
     type_embedding: int = 5
     jastrow_layers: int = 3
-    spin_symmetry: bool = True
-    identical_h1_update: bool = False
-    identical_h2_update: bool = False
 
     @nn.compact
     def __call__(self, r: Array, x: Array) -> Array:
@@ -280,21 +278,21 @@ class FermiNet(FullWfn):
             ], axis=1)
 
         for ii, (sdim, pdim) in enumerate(self.hidden_dims):
+            flargs = ({**self.fermilayer, "h2_convolution": False} 
+                      if ii == 0 else self.fermilayer)
             flayer = FermiLayer(
                 single_size=sdim,
                 pair_size=pdim,
                 split_sec=split_sec,
                 activation='tanh' if ii==0 else self.activation,
-                h2_prod_h1=False if ii==0 else self.h2_prod_h1,
                 rescale_residual=self.rescale_residual,
-                spin_symmetry=self.spin_symmetry,
-                identical_h1_update=self.identical_h1_update,
-                identical_h2_update=self.identical_h2_update
+                **flargs
             )
             h1, h2 = flayer(h1, h2)
 
-        orbital_map = OrbitalMap((n_up, n_dn), self.determinants, 
-                                 self.full_det, self.spin_symmetry)
+
+        orbital_map = OrbitalMap((n_up, n_dn), self.determinants, self.full_det, 
+                                 self.fermilayer.get("spin_symmetry", False))
         # tuple of [n_det, n_orb, n_orb]
         orbitals = orbital_map(h1, d_ei=dmat[n_nucl:, :n_nucl])
 

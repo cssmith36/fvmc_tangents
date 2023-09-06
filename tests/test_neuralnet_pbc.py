@@ -12,8 +12,21 @@ from .test_wavefunction import make_collapse_conf
 _key0 = jax.random.PRNGKey(0)
 
 
-_conf1 = {"identical_h2_update": False, "spin_symmetry": False}
-_conf2 = {"identical_h2_update": True, "spin_symmetry": True}
+_conf1 = {"fermilayer": {
+              "h2_convolution": False,
+              "identical_h1_update": False,
+              "identical_h2_update": False, 
+              "spin_symmetry": False}}
+_conf2 = {"fermilayer": {
+              "h2_convolution": False,
+              "identical_h1_update": True,
+              "identical_h2_update": False, 
+              "spin_symmetry": True}}
+_conf3 = {"fermilayer": {
+              "h2_convolution": True,
+              "identical_h1_update": False,
+              "identical_h2_update": True, 
+              "spin_symmetry": True}}
 
 
 def test_feature_pbc():
@@ -34,7 +47,7 @@ def test_feature_pbc():
     chex.assert_tree_all_close(res1, res3, atol=1e-10)
 
 
-@pytest.fixture(scope='module', params=[_conf1, _conf2])
+@pytest.fixture(scope='module', params=[_conf1, _conf2, _conf3])
 def model_data(request):
     r, elems, x = make_collapse_conf()
     cell = jnp.eye(3) * 6.

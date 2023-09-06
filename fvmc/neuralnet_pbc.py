@@ -64,8 +64,8 @@ class PbcEnvelope(nn.Module):
     n_out: int
     n_k: Optional[int] = None
     close_shell: bool = True
-    use_complex: bool = False
-    pair_type: str = 'product'
+    use_complex: bool = True
+    pair_type: str = 'general'
 
     @nn.compact
     def __call__(self, h1, x):
@@ -186,17 +186,14 @@ class FermiNetPbc(FullWfn):
     spins: tuple[int, int]
     cell: Array
     raw_freq: int = 5
-    hidden_dims: Sequence[Tuple[int, int]] = ((64, 16),)*4
     determinants: int = 4
-    envelope: dict = dataclasses.field(default_factory=dict)
+    hidden_dims: Sequence[Tuple[int, int]] = ((64, 16),)*4
     activation: str = "gelu"
-    h2_prod_h1: bool = False
     rescale_residual: bool = True
+    envelope: dict = dataclasses.field(default_factory=dict)
+    fermilayer: dict = dataclasses.field(default_factory=dict)
     type_embedding: int = 5
     jastrow_layers: int = 3
-    spin_symmetry: bool = True
-    identical_h1_update: bool = False
-    identical_h2_update: bool = False
     nuclei_module: Optional[FullWfn] = None
 
     @nn.compact
@@ -219,16 +216,15 @@ class FermiNetPbc(FullWfn):
             ], axis=1)
 
         for ii, (sdim, pdim) in enumerate(self.hidden_dims):
+            flargs = ({**self.fermilayer, "h2_convolution": False} 
+                      if ii == 0 else self.fermilayer)
             flayer = FermiLayer(
                 single_size=sdim,
                 pair_size=pdim,
                 split_sec=split_sec,
                 activation='tanh' if ii==0 else self.activation,
-                h2_prod_h1=False if ii==0 else self.h2_prod_h1,
                 rescale_residual=self.rescale_residual,
-                spin_symmetry=self.spin_symmetry,
-                identical_h1_update=self.identical_h1_update,
-                identical_h2_update=self.identical_h2_update
+                **flargs
             )
             h1, h2 = flayer(h1, h2)
 
