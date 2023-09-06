@@ -19,14 +19,15 @@ def test_h2_kfac(tmp_path, capfd):
 
     #TODO make parameters for ansatz
 
-    cfg.sample.size = 2048
+    cfg.sample.size = 512
     cfg.sample.sampler = 'mala'
     cfg.sample.mala.tau = 0.1
     cfg.sample.mala.steps = 10
     cfg.sample.burn_in = 100
 
+    cfg.loss.energy_clipping = 5.
+
     cfg.optimize.iterations = 100
-    cfg.optimize.loss.energy_clipping = 5.
     cfg.optimize.optimizer = 'kfac'
     cfg.optimize.lr.base = 1e-4
 

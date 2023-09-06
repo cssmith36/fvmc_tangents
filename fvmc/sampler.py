@@ -172,7 +172,7 @@ def build_gaussian(logdens_fn, shape_or_init, mu=0., sigma=1., truncate=None):
     return MCSampler(sample, init, refresh)
 
 
-def build_metropolis(logdens_fn, shape_or_init, sigma=0.05, steps=10):
+def build_metropolis(logdens_fn, shape_or_init, sigma=0.1, steps=10):
     sample_shape = _extract_sample_shape(shape_or_init)
     xsize, unravel = ravel_shape(sample_shape)
     ravel_logd = lambda p, x: logdens_fn(p, unravel(x))

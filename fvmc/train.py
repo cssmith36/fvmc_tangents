@@ -69,7 +69,7 @@ def match_loaded_state_to_device(train_state, multi_device: bool):
     return TrainingState(key, params, mc_state, opt_state)
 
 
-def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
+def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
             fully_quantum=False, key=None, restart_cfg=None, multi_device=False):
     """prepare system, ansatz, sampler, optimizer and training state"""
 
@@ -127,7 +127,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, optimize_cfg,
     local_fn = (build_eval_local_full(ansatz, elems, cell) if fully_quantum
                 else build_eval_local_elec(ansatz, elems, nuclei, cell))
     loss_fn = build_eval_total(local_fn, 
-        pmap_axis_name=PAXIS.name, **optimize_cfg.loss)
+        pmap_axis_name=PAXIS.name, **loss_cfg)
     loss_and_grad = jax.value_and_grad(loss_fn, has_aux=True)
 
     # make sampler
@@ -292,7 +292,7 @@ def main(cfg):
 
     key = jax.random.PRNGKey(cfg.seed) if 'seed' in cfg else None
     system, ansatz, loss_fn, sampler, optimizer, train_state \
-        = prepare(cfg.system, cfg.ansatz, cfg.sample, cfg.optimize, 
+        = prepare(cfg.system, cfg.ansatz, cfg.sample, cfg.loss, cfg.optimize, 
                   cfg.fully_quantum, key, cfg.restart, cfg.multi_device)
 
     training_step = build_training_step(sampler, optimizer)

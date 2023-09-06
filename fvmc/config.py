@@ -31,20 +31,22 @@ def default() -> ConfigDict:
             "size": 2048,
             "chains": None,
             "burn_in": 100,
-            "sampler": "mala",
+            "sampler": "mcmc",
             "mcmc": {},
             "mala": {},
             "hmc": {},
             "black": {},
         },
 
+        "loss": {
+            "energy_clipping": 5.,
+            "center_shifting": True,
+            "clip_from_median": True,
+        },
+
         "optimize": {
             "iterations": 100_000,
             "lr": {},
-            "loss": {
-                "energy_clipping": 5.,
-                "center_shifting": True,
-            },
             "optimizer": "kfac",
             "grad_clipping": 1., # will not work for kfac
             "kfac": {},
