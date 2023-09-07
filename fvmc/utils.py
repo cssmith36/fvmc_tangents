@@ -338,7 +338,7 @@ def log_linear_exp(
     else:
         result = jnp.sum(shifted, axis=axis, keepdims=True)
     absres = jnp.abs(result)
-    nsigns = result / absres if jnp.iscomplexobj(result) else result
+    nsigns = result / absres if jnp.iscomplexobj(result) else jnp.sign(result)
     nvals = jnp.log(absres) + max_val
     return nsigns, nvals
 
