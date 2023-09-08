@@ -332,7 +332,7 @@ def log_linear_exp(
     if weights is not None:
         # swap axis and -1 to conform to jnp.dot api
         shifted = jnp.swapaxes(shifted, axis, -1)
-        result = jnp.dot(shifted, weights)
+        result = shifted @ weights
         # swap axis and -1 back after the contraction
         result = jnp.swapaxes(result, axis, -1)
     else:

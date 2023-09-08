@@ -51,8 +51,7 @@ class RepeatedDenseBlock(kfac_jax.DenseTwoKroneckerFactored):
       ema_old: chex.Numeric,
       ema_new: chex.Numeric,
       batch_size: int,
-      pmap_axis_name: Optional[str],
-      sync: chex.Array | bool = True,
+      **kwargs
   ) -> kfac_jax.TwoKroneckerFactored.State:
     estimation_data = dict(**estimation_data)
     x, = estimation_data["inputs"]
@@ -67,8 +66,7 @@ class RepeatedDenseBlock(kfac_jax.DenseTwoKroneckerFactored):
         ema_old=ema_old,
         ema_new=ema_new,
         batch_size=batch_size,
-        pmap_axis_name=pmap_axis_name,
-        sync=sync,
+        **kwargs
     )
             
 
