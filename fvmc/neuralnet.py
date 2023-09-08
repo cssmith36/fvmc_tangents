@@ -189,12 +189,15 @@ class OrbitalMap(nn.Module):
         # make orbital from h1 and envelope
         def orbital_fn(h1_el, h1_nu, d_ei, n_orb):
             n_param = n_orb * n_det
-            dense = nn.Dense(n_param, param_dtype=_t_real)
-            envelope = IsotropicEnvelope(n_orb * n_det)
-            assert envelope.n_out == n_orb * n_det
             # Actual orbital function
-            return (dense(h1_el).reshape(-1, n_orb, n_det) 
-                    * envelope(h1_nu, d_ei).reshape(-1, n_orb, n_det))
+            dense = nn.Dense(n_param, param_dtype=_t_real)
+            orbs = dense(h1_el).reshape(-1, n_orb, n_det)
+            # only apply envelope when there are nuclei
+            if n_nu > 0:
+                envelope = IsotropicEnvelope(n_orb * n_det)
+                assert envelope.n_out == n_orb * n_det
+                orbs *= envelope(h1_nu, d_ei).reshape(-1, n_orb, n_det)
+            return orbs
 
         # Case destinction for weight sharing 
         h1_nucl, h1_elec = jnp.split(h1, [n_nu])

@@ -69,6 +69,31 @@ def match_loaded_state_to_device(train_state, multi_device: bool):
     return TrainingState(key, params, mc_state, opt_state)
 
 
+def parse_system_cfg(system_cfg):
+    # optional cell
+    cell = system_cfg.get("cell", None)
+    if cell is not None:
+        cell = jnp.asarray(cell)
+        if cell.ndim == 1:
+            cell = jnp.diag(cell)
+    # no nuclei case, HEG, has to be in pbc
+    if system_cfg.nuclei is None and system_cfg.elems is None:
+        assert cell is not None
+        space_dim = cell.shape[-1]
+        nuclei = jnp.zeros((0, space_dim), dtype=float)
+        elems = jnp.zeros((0,), dtype=int)
+    else:
+        nuclei = jnp.asarray(system_cfg.nuclei)
+        elems = jnp.asarray(system_cfg.elems, dtype=int)
+    tot_elec = int(sum(elems) - system_cfg.charge)
+    spin = system_cfg.spin if system_cfg.spin is not None else tot_elec % 2
+    assert (tot_elec - spin) % 2 == 0, \
+        f"system with {tot_elec} electrons cannot have spin {spin}"
+    n_elec = (tot_elec + spin) // 2, (tot_elec - spin) // 2
+    system = SysInfo(elems, n_elec, nuclei, cell)
+    return system
+
+
 def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
             fully_quantum=False, key=None, restart_cfg=None, multi_device=False):
     """prepare system, ansatz, sampler, optimizer and training state"""
@@ -84,19 +109,8 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
         map(ConfigDict, (system_cfg, sample_cfg, optimize_cfg, restart_cfg))
 
     # parse system, may be changed (e.g. using pyscf mol)
-    nuclei = jnp.asarray(system_cfg.nuclei)
-    elems = jnp.asarray(system_cfg.elems, dtype=int)
-    tot_elec = int(sum(elems) + system_cfg.charge)
-    spin = system_cfg.spin if system_cfg.spin is not None else tot_elec % 2
-    assert (tot_elec - spin) % 2 == 0, \
-        f"system with {tot_elec} electrons cannot have spin {spin}"
-    n_elec = (tot_elec + spin) // 2, (tot_elec - spin) // 2
-    cell = system_cfg.get("cell", None)
-    if cell is not None:
-        cell = jnp.asarray(cell)
-        if cell.ndim == 1:
-            cell = jnp.diag(cell)
-    system = SysInfo(elems, n_elec, nuclei, cell)
+    system = parse_system_cfg(system_cfg)
+    elems, n_elec, nuclei, cell = system
 
     # make wavefunction
     if all(callable(getattr(ansatz_cfg, _f, None)) for _f in ('init', 'apply')):
@@ -138,7 +152,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
     n_multistep = -(-n_sample // n_chain)
     n_batch = n_chain // n_device
     conf_init_fn = build_conf_init_fn(
-        elems, nuclei, tot_elec, with_r=fully_quantum)
+        elems, nuclei, sum(n_elec), with_r=fully_quantum)
     raw_sampler = build_sampler(
         log_prob_fn, 
         conf_init_fn, 

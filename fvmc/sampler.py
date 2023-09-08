@@ -69,6 +69,9 @@ def build_sampler(log_prob_fn: Callable[[Params, Sample], Array],
 
 def build_conf_init_fn(elems, nuclei, n_elec, 
                        sigma_x=1., with_r=False, sigma_r=0.1):
+    if nuclei.size == 0:
+        nuclei = nuclei.sum(-2, keepdims=True)
+        elems = [0]
     elems = jnp.asarray(elems, dtype=int)
     n_dim = nuclei.shape[-1]
     n_elec = int(sum(n_elec)) if not isinstance(n_elec, int) else n_elec

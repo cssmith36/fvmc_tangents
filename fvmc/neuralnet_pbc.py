@@ -240,7 +240,8 @@ class FermiNetPbc(FullWfn):
         envelopes = envelope_map(h1e, x)
 
         dweight_map = nn.Dense(self.determinants, param_dtype=_t_real)
-        det_weights = dweight_map(h1n.mean(0, keepdims=True)).T # [n_det, 1]
+        dw_in = (h1n if n_nucl > 0 else h1e).mean(0, keepdims=True)
+        det_weights = dweight_map(dw_in).T # [n_det, 1]
         dets = geminals * envelopes
         signs, logdets = jnp.linalg.slogdet(dets)
         sign, logpsi = log_linear_exp(signs, logdets, det_weights, axis=0)
