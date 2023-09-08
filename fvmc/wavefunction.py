@@ -1,6 +1,6 @@
 import abc
 from dataclasses import field as _field
-from typing import Optional, Sequence, Tuple, Union
+from typing import Any, Callable, NamedTuple, Sequence, Tuple
 
 import jax
 from flax import linen as nn
@@ -8,8 +8,8 @@ from jax import numpy as jnp
 
 from fvmc.utils import Array
 
-from .utils import (Array, _t_real, build_mlp, cdist, displace_matrix, fix_init,
-                    parse_spin, pdist)
+from .utils import (Array, _t_real, build_mlp, cdist, displace_matrix,
+                    fix_init, parse_spin, pdist)
 
 
 def log_prob_from_model(model: nn.Module):
@@ -34,6 +34,17 @@ class ElecWfn(nn.Module, abc.ABC):
     def __call__(self, x: Array) -> Tuple[Array, Array]:
         """Take only the electron position x, return sign and log|psi|"""
         raise NotImplementedError
+    
+
+class FakeModel(NamedTuple):
+    fn: Callable
+    init_params: Any
+
+    def init(self, *args, **kwargs):
+        return self.init_params
+
+    def apply(self, params, *args):
+        return self.fn(params, *args)
 
 
 class FixNuclei(ElecWfn):
