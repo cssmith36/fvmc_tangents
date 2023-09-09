@@ -3,7 +3,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax.flatten_util import ravel_pytree
 
-from .utils import pdist, cdist, compose
+from .utils import pdist, cdist, adaptive_grad
 
 
 def calc_coulomb(charge, pos):
@@ -32,15 +32,7 @@ def calc_pe(elems, r, x):
     return el_el + el_ion + ion_ion
 
 
-def r2c_grad(f, argnums=0):
-    f_splited = compose(lambda x: jnp.array([x.real, x.imag]), f)
-    def grad_f(*args, **kwargs):
-        jac = jax.jacrev(f_splited, argnums=argnums)(*args, **kwargs)
-        return jax.tree_map(lambda x: x[0] + 1j * x[1], jac)
-    return grad_f
-
-
-def calc_ke_elec(log_psi, x, complex_output=False):
+def calc_ke_elec(log_psi, x):
     # adapted from FermiNet and vmcnet
     # calc -0.5 * (\nable^2 \psi) / \psi
     # handle batch of x automatically
@@ -53,7 +45,7 @@ def calc_ke_elec(log_psi, x, complex_output=False):
         ncoord = flat_x.size
 
         f = lambda flat_x: log_psi(flat_x.reshape(x_shape)) # take flattened x
-        grad_f = r2c_grad(f) if complex_output else jax.grad(f)
+        grad_f = adaptive_grad(f)
         grad_value, dgrad_f = jax.linearize(grad_f, flat_x)
 
         eye = jnp.eye(ncoord)
@@ -78,7 +70,7 @@ def get_nuclei_mass(elems):
     return mass
 
 
-def calc_ke_full(log_psi, mass, r, x, complex_output=False):
+def calc_ke_full(log_psi, mass, r, x):
     # adapted from FermiNet and vmcnet
     # calc -0.5 * (\nable^2 \psi) / \psi
     # handle batch of r, x automatically
@@ -92,7 +84,7 @@ def calc_ke_full(log_psi, mass, r, x, complex_output=False):
         assert mass.size == r.shape[0]
         
         f = lambda flat_in: log_psi(*unravel(flat_in)) # take flattened x
-        grad_f = r2c_grad(f) if complex_output else jax.grad(f)
+        grad_f = adaptive_grad(f)
         grad_value, dgrad_f = jax.linearize(grad_f, flat_in)
 
         minv = jnp.concatenate([jnp.repeat(1/mass, r.shape[1]), 

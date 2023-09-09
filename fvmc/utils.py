@@ -80,9 +80,32 @@ def symmetrize(x):
     return (x + _H(x)) / 2
 
 
-def cmult(x1, x2):
-    return ((x1.real * x2.real - x1.imag * x2.imag) 
-        + 1j * (x1.imag * x2.real + x1.real * x2.imag))
+def r2c_grad(f, argnums=0, has_aux=False):
+    if has_aux:
+        return r2c_grad_with_aux(f, argnums=argnums)
+    f_splited = compose(lambda x: jnp.array([x.real, x.imag]), f)
+    def grad_f(*args, **kwargs):
+        jac = jax.jacrev(f_splited, argnums=argnums)(*args, **kwargs)
+        return jax.tree_map(lambda x: x[0] + 1j * x[1], jac)
+    return grad_f
+
+def r2c_grad_with_aux(f, argnums=0):
+    f_splited = compose(lambda x: (jnp.array([x[0].real, x[0].imag]), x[1]), f)
+    def grad_f(*args, **kwargs):
+        jac, aux = jax.jacrev(f_splited, 
+                        argnums=argnums, has_aux=True)(*args, **kwargs)
+        return jax.tree_map(lambda x: x[0] + 1j * x[1], jac), aux
+    return grad_f
+
+def adaptive_grad(f, argnums=0, has_aux=False):
+    rgrad_f = jax.grad(f, argnums=argnums, has_aux=has_aux)
+    cgrad_f = r2c_grad(f, argnums=argnums, has_aux=has_aux)
+    def agrad_f(*args, **kwargs):
+        try:
+            return rgrad_f(*args, **kwargs)
+        except TypeError:
+            return cgrad_f(*args, **kwargs)
+    return agrad_f
 
 
 def wrap_complex_linear(func: Callable[[Array], Array]):

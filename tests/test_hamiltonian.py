@@ -108,7 +108,7 @@ def test_kinetic_energy_compelx(p):
 
     # target ke should be -0.5 * p**2
     target_ke = jnp.sum(-0.5 * p**2)
-    actual_ke = calc_ke_elec(log_psi_fn, xx, complex_output=jnp.iscomplexobj(p))
+    actual_ke = calc_ke_elec(log_psi_fn, xx)
 
     np.testing.assert_allclose(actual_ke, target_ke)
 

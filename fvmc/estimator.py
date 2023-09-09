@@ -51,7 +51,7 @@ def build_eval_local_elec(model, elems, nuclei, cell=None):
     def eval_local(params, x):
         sign, logf = model.apply(params, x)
         log_psi_fn = get_log_psi(model.apply, params)
-        ke = calc_ke_elec(log_psi_fn, x, complex_output=jnp.iscomplexobj(sign))
+        ke = calc_ke_elec(log_psi_fn, x)
         pe = calc_pe_adapt(elems, nuclei, x)
         eloc = ke + pe
         return eloc, sign, logf
@@ -81,7 +81,7 @@ def build_eval_local_full(model, elems, cell=None):
         r, x = conf
         sign, logf = model.apply(params, r, x)
         log_psi_fn = get_log_psi(model.apply, params)
-        ke = calc_ke_full(log_psi_fn, mass, r, x, complex_output=jnp.iscomplexobj(sign))
+        ke = calc_ke_full(log_psi_fn, mass, r, x)
         pe = calc_pe_adapt(elems, r, x)
         eloc = ke + pe
         return eloc, sign, logf
