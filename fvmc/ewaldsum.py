@@ -100,7 +100,7 @@ class EwaldSum:
         """Calculation the Coulomb energy from point charges and their positions"""
         return (sum(self.const_part(charge))
                 + self.real_part(charge, pos) 
-                + self.recip_part(charge, pos))
+                + self.recip_part(charge, pos)).real
     
     def calc_pe(self, elems, r, x):
         """Warpped interface for potential energy from nuclei and electrons"""
