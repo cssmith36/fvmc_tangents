@@ -84,7 +84,7 @@ class EwaldSum:
             return 0
         disp = displace_matrix(pos, pos, disp_fn=self.disp_fn)
         rvec = disp[None, :, :, :] + self.lattice_displacements[:, None, None, :]
-        r = jnp.linalg.norm(rvec, axis=-1)
+        r = jnp.linalg.norm(rvec + jnp.eye(pos.shape[0])[..., None], axis=-1)
         charge_ij = charge[:, None] * charge[None, :]
         e_real = jnp.sum(jnp.triu(charge_ij * jax.lax.erfc(self.alpha * r) / r, k=1))
         e_real += 0.5 * jnp.sum(charge ** 2) * self.simg_const
@@ -94,13 +94,13 @@ class EwaldSum:
         g_dot_r = self.gpoints @ pos.T # [n_gpoints, n_particle]
         sfactor = jnp.exp(1j * g_dot_r) @ charge # [n_gpoints,]
         e_recip = self.gweight @ (sfactor * sfactor.conj())
-        return e_recip
+        return e_recip.real
     
     def energy(self, charge, pos):
         """Calculation the Coulomb energy from point charges and their positions"""
         return (sum(self.const_part(charge))
                 + self.real_part(charge, pos) 
-                + self.recip_part(charge, pos)).real
+                + self.recip_part(charge, pos))
     
     def calc_pe(self, elems, r, x):
         """Warpped interface for potential energy from nuclei and electrons"""
