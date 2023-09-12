@@ -151,8 +151,8 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
         LOGGER.warning("Sample size not divisible by batch size, rounding up")
     n_multistep = -(-n_sample // n_chain)
     n_batch = n_chain // n_device
-    conf_init_fn = build_conf_init_fn(
-        elems, nuclei, sum(n_elec), with_r=fully_quantum)
+    conf_init_fn = sample_cfg.get("conf_init_fn", build_conf_init_fn(
+        elems, nuclei, sum(n_elec), with_r=fully_quantum))
     raw_sampler = build_sampler(
         log_prob_fn, 
         conf_init_fn, 
