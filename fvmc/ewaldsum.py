@@ -72,29 +72,30 @@ class EwaldSum:
         self.gweight = raw_gweight[selected_gidx]
 
     def const_part(self, charge):
+        dm1 = self.latvec.shape[-1] - 1
         q_sum = jnp.sum(charge)
         q2_sum = jnp.sum(charge ** 2)
         e_self = - self.alpha / jnp.sqrt(jnp.pi) * q2_sum
-        e_charged = - jnp.pi / (2 * self.cellvolume * self.alpha ** 2) * q_sum ** 2
+        denom = dm1 * self.cellvolume * self.alpha ** dm1
+        e_charged = - jnp.pi ** (dm1/2.) / denom * q_sum ** 2
         return e_self, e_charged
     
     def real_part(self, charge, pos):
-        # note that the self image contribution is ignored, just like pyqmc
         if charge.shape[0] < 2:
             return 0
         disp = displace_matrix(pos, pos, disp_fn=self.disp_fn)
         rvec = disp[None, :, :, :] + self.lattice_displacements[:, None, None, :]
-        r = jnp.linalg.norm(rvec, axis=-1)
+        r = jnp.linalg.norm(rvec + jnp.eye(pos.shape[0])[..., None], axis=-1)
         charge_ij = charge[:, None] * charge[None, :]
         e_real = jnp.sum(jnp.triu(charge_ij * jax.lax.erfc(self.alpha * r) / r, k=1))
-        e_real += 0.5 * jnp.sum(charge ** 2) * self.simg_const
+        e_real += 0.5 * jnp.sum(charge ** 2) * self.simg_const # self image
         return e_real
     
     def recip_part(self, charge, pos):
         g_dot_r = self.gpoints @ pos.T # [n_gpoints, n_particle]
         sfactor = jnp.exp(1j * g_dot_r) @ charge # [n_gpoints,]
         e_recip = self.gweight @ (sfactor * sfactor.conj())
-        return e_recip
+        return e_recip.real
     
     def energy(self, charge, pos):
         """Calculation the Coulomb energy from point charges and their positions"""
@@ -161,7 +162,12 @@ def gen_positive_gpoints(recvec, g_max):
 
 
 def calc_gweight(gpoints, cellvolume, alpha):
-    gsquared = jnp.einsum("...k,...k->...", gpoints, gpoints)
-    gweight = 4 * jnp.pi * jnp.exp(-gsquared / (4 * alpha ** 2))
-    gweight /= cellvolume * gsquared
+    if gpoints.shape[-1] == 2:
+        gnorm = jnp.linalg.norm(gpoints, axis=-1)
+        gweight = (2 * jnp.pi / (cellvolume * gnorm)
+                   * jax.lax.erfc(gnorm / ( 2 * alpha)))
+    else: # 3d case
+        gsquared = (gpoints ** 2).sum(-1)
+        gweight = (4 * jnp.pi / (cellvolume * gsquared)
+                   * jnp.exp(-gsquared / (4 * alpha ** 2)))
     return gweight

@@ -262,7 +262,7 @@ def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1.,
         if not jittered:
             return length, extra_state
         jkey, subkey = jax.random.split(extra_state[0])
-        jlength = jax.random.uniform(subkey) * length
+        jlength = (1 - float(jittered) * jax.random.uniform(subkey)) * length
         return jlength, (jkey, *extra_state[1:])
 
     def sample(key, params, state):
@@ -274,8 +274,8 @@ def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1.,
         # pot fn take scaled q as input
         potential_fn = lambda xs: -ravel_logd(params, xs / scale)
         # determine integration length
-        jlength, extras = _jitter_length(extras)
-        leapfrog = gen_leapfrog(potential_fn, dt, round(jlength / dt), True)
+        length, extras = _jitter_length(extras)
+        leapfrog = gen_leapfrog(potential_fn, dt, round(length / dt), True)
         q2s, p2, f2s, v2 = leapfrog(q1s, p1, -g1s, -ld1)
         # scale back the coordinates for output
         q2, g2, ld2 = q2s / scale, -f2s * scale, -v2
