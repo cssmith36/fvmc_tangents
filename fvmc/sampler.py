@@ -36,11 +36,11 @@ class MCSampler(NamedTuple):
         """Burn in the state for given steps"""
         # inner = lambda s,k: (self.sample(k, params, s)[0], None)
         # return lax.scan(inner, state, jax.random.split(key, steps))[0]
-        for ii in range(steps):
+        for _ in range(steps):
             key, subkey = adaptive_split(key, multi_device=key.ndim>1)
             state = self.sample(subkey, params, state)[0]
         return state
-    
+
 
 def choose_sampler_builder(name: str) -> Callable[..., MCSampler]:
     name = name.lower()
@@ -57,17 +57,17 @@ def choose_sampler_builder(name: str) -> Callable[..., MCSampler]:
     raise NotImplementedError(f"unsupported sampler type: {name}")
 
 
-def build_sampler(log_prob_fn: Callable[[Params, Sample], Array], 
-                  shape_or_init: Union[tuple, onp.ndarray, callable], 
-                  name: str, 
-                  beta: float = 1, 
+def build_sampler(log_prob_fn: Callable[[Params, Sample], Array],
+                  shape_or_init: Union[tuple, onp.ndarray, callable],
+                  name: str,
+                  beta: float = 1,
                   **kwargs):
     builder = choose_sampler_builder(name)
     logdens_fn = lambda p, x: beta * log_prob_fn(p, x)
     return builder(logdens_fn, shape_or_init, **kwargs)
 
 
-def build_conf_init_fn(elems, nuclei, n_elec, 
+def build_conf_init_fn(elems, nuclei, n_elec,
                        sigma_x=1., with_r=False, sigma_r=0.1):
     if nuclei.size == 0:
         nuclei = nuclei.sum(-2, keepdims=True)
@@ -91,7 +91,7 @@ def build_conf_init_fn(elems, nuclei, n_elec,
         else:
             init_r = nuclei + jax.random.normal(key, nuclei.shape) * sigma_r
             return [init_r, init_x]
-    
+
     return init_fn
 
 
@@ -165,7 +165,7 @@ def build_gaussian(logdens_fn, shape_or_init, mu=0., sigma=1., truncate=None):
         new_sample = rawgs * sigma + mu
         new_logdens = logd_gaussian(new_sample, mu, sigma).sum()
         return (new_sample,), (unravel(new_sample), new_logdens), info
-    
+
     def init(key, params):
         return (jnp.zeros((xsize,)),)
 
@@ -199,7 +199,7 @@ def build_metropolis(logdens_fn, shape_or_init, sigma=0.1, steps=10):
         sample = state[0]
         ld_new = ravel_logd(params, sample)
         return (sample, ld_new)
-    
+
     init = _gen_init_from_refresh(refresh, shape_or_init)
 
     return MCSampler(sample, init, refresh)
@@ -212,7 +212,7 @@ def build_langevin(logdens_fn, shape_or_init, tau=0.1, steps=10, grad_clipping=N
     logd_and_grad = jax.value_and_grad(ravel_logd, 1)
 
     # log transition probability q(x2|x1)
-    def log_q(x2, x1, g1): 
+    def log_q(x2, x1, g1):
         d = x2 - x1 - tau * g1
         norm = (d * d.conj()).real.sum(-1)
         return -1/(4*tau) * norm
@@ -243,9 +243,9 @@ def build_langevin(logdens_fn, shape_or_init, tau=0.1, steps=10, grad_clipping=N
     return MCSampler(sample, init, refresh)
 
 
-def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1., 
+def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1.,
                       mass=1., jittered=False, grad_clipping=None,
-                      vmap_axis_name=MC_BATCH_AXIS_NAME, 
+                      vmap_axis_name=MC_BATCH_AXIS_NAME,
                       pmap_axis_name=PMAP_AXIS_NAME):
     # initialize pmap and vmap utilities
     vaxis = PmapAxis(vmap_axis_name)
@@ -313,11 +313,12 @@ def build_blackjax(logdens_fn, shape_or_init, kernel="nuts", grad_clipping=None,
 
     def sample(key, params, state):
         logprob_fn = partial(ravel_logd, params)
-        kernel = kmodule(logprob_fn, 
+        kernel = kmodule(logprob_fn,
             inverse_mass_matrix=inv_mass, **kwargs)
         state = state[1]
         state, info = kernel.step(key, state)
-        return (state.position, state), (unravel(state.position), -state.potential_energy), info._asdict()
+        return ((state.position, state),
+               (unravel(state.position), -state.potential_energy), info._asdict())
 
     def refresh(state, params):
         sample = state[0]
@@ -380,7 +381,7 @@ def _gclip(x, bnd):
 
 
 def _extract_sample_shape(shape_or_init):
-    # shape_or_init is either a pytree of shapes 
+    # shape_or_init is either a pytree of shapes
     # or a init function that take a key and give an init x
     if not callable(shape_or_init): # is shape
         sample_shape = shape_or_init
@@ -392,7 +393,7 @@ def _extract_sample_shape(shape_or_init):
 
 
 def _gen_init_from_refresh(refresh_fn, shape_or_init):
-    # shape_or_init is either a pytree of shapes 
+    # shape_or_init is either a pytree of shapes
     # or a init function that take a key and give an init x
     if not callable(shape_or_init):
         size, unravel = ravel_shape(shape_or_init)

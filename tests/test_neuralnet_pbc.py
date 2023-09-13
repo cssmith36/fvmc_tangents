@@ -15,17 +15,17 @@ _key0 = jax.random.PRNGKey(0)
 _conf1 = {"fermilayer": {
               "h2_convolution": False,
               "identical_h1_update": False,
-              "identical_h2_update": False, 
+              "identical_h2_update": False,
               "spin_symmetry": False}}
 _conf2 = {"fermilayer": {
               "h2_convolution": False,
               "identical_h1_update": True,
-              "identical_h2_update": False, 
+              "identical_h2_update": False,
               "spin_symmetry": True}}
 _conf3 = {"fermilayer": {
               "h2_convolution": True,
               "identical_h1_update": False,
-              "identical_h2_update": True, 
+              "identical_h2_update": True,
               "spin_symmetry": True}}
 
 
@@ -66,7 +66,7 @@ def test_elec_antisymm(model_data):
     model, params, r, x = model_data
     iperm = jnp.arange(x.shape[0], dtype=int).at[:2].set([1,0])
     px = x[iperm, :]
-    
+
     sign1, logf1 = model.apply(params, r, x)
     sign2, logf2 = model.apply(params, r, px)
     np.testing.assert_allclose(sign1, -sign2, equal_nan=False)
@@ -78,7 +78,7 @@ def test_nucl_symm(model_data):
     model, params, r, x = model_data
     iperm = jnp.arange(r.shape[0], dtype=int).at[:2].set([1,0])
     pr = r[iperm, :]
-    
+
     sign1, logf1 = model.apply(params, r, x)
     sign2, logf2 = model.apply(params, pr, x)
     np.testing.assert_allclose(sign1, sign2, equal_nan=False)
@@ -90,7 +90,7 @@ def test_particle_pbc(model_data):
     model, params, r, x = model_data
     px = x.at[0, 0].add(6.)
     pr = r.at[0, 0].add(6.)
-    
+
     sign1, logf1 = model.apply(params, r, x)
     sign2, logf2 = model.apply(params, pr, x)
     sign3, logf3 = model.apply(params, r, px)

@@ -70,7 +70,7 @@ class RepeatedDenseBlock(kfac_jax.DenseTwoKroneckerFactored):
         *args,
         **kwargs
     )
-            
+
 
 def _dense(x: chex.Array, params: Sequence[chex.Array]) -> chex.Array:
     """Example of a dense layer function."""
@@ -101,11 +101,11 @@ def _make_repeat_dense_pattern(
         reshape: bool,
         in_dim: int = 13,
         out_dim: int = 5,
-        extra_dims: Sequence[int] = tuple(range(6, 13))
+        extra_dims: Sequence[int] = tuple(range(6, 13)) # noqa: B008
 ) -> kfac_jax.tag_graph_matcher.GraphPattern:
     example_fn = _dense_with_reshape if with_bias and reshape else _dense
-    for i in range(batch_dims):
-        example_fn = jax.vmap(example_fn, 
+    for _ in range(batch_dims):
+        example_fn = jax.vmap(example_fn,
             in_axes=[0, ([None, None] if with_bias else [None])])
     x_shape = [*extra_dims[:batch_dims+1], in_dim]
     p_shapes = ([[in_dim, out_dim], [out_dim]] if with_bias else
@@ -119,7 +119,7 @@ def _make_repeat_dense_pattern(
         parameters_extractor_func=_dense_parameter_extractor,
         example_args=[np.zeros(x_shape), [np.zeros(s) for s in p_shapes]],
     )
-    
+
 
 GRAPH_PATTERNS = tuple(
     _make_repeat_dense_pattern(n, b, s)

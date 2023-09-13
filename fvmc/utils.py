@@ -69,14 +69,14 @@ def clip_gradient_bwd(res, g):
 clip_gradient.defvjp(clip_gradient_fwd, clip_gradient_bwd)
 
 
-def _T(x): 
+def _T(x):
     return jnp.swapaxes(x, -1, -2)
 
-def _H(x): 
+def _H(x):
     return jnp.conj(_T(x))
 
 
-def symmetrize(x): 
+def symmetrize(x):
     return (x + _H(x)) / 2
 
 
@@ -92,7 +92,7 @@ def r2c_grad(f, argnums=0, has_aux=False):
 def r2c_grad_with_aux(f, argnums=0):
     f_splited = compose(lambda x: (jnp.array([x[0].real, x[0].imag]), x[1]), f)
     def grad_f(*args, **kwargs):
-        jac, aux = jax.jacrev(f_splited, 
+        jac, aux = jax.jacrev(f_splited,
                         argnums=argnums, has_aux=True)(*args, **kwargs)
         return jax.tree_map(lambda x: x[0] + 1j * x[1], jac), aux
     return grad_f
@@ -180,7 +180,7 @@ def estimate_activation_gain(actv_fn):
     return gamma
 
 
-_activation_gain_dict = {(actv_fn := getattr(nn, name)): 
+_activation_gain_dict = {(actv_fn := getattr(nn, name)):
                             estimate_activation_gain(actv_fn)
                          for name in ("silu", "tanh", "gelu")}
 
@@ -243,8 +243,8 @@ def multi_process_name(filename):
     if n_proc == 1:
         return filename
     numlen = len(str(n_proc))
-    return f"{filename}.pid{jax.process_index():0{numlen}d}" 
-    
+    return f"{filename}.pid{jax.process_index():0{numlen}d}"
+
 
 def cfg_to_dict(cfg):
     if not isinstance(cfg, ConfigDict):
@@ -401,14 +401,14 @@ def build_mlp(
     **dense_kwargs
 ) -> Serial:
     layers = [nn.Dense(ls, **dense_kwargs) for ls in layer_sizes]
-    return Serial(layers, 
+    return Serial(layers,
                   residual=residual, activation=activation, rescale=rescale)
 
 
 class Printer:
 
-    def __init__(self, 
-                 field_format: Dict[str, Optional[str]], 
+    def __init__(self,
+                 field_format: Dict[str, Optional[str]],
                  time_format: Optional[str]=None,
                  **print_kwargs):
         all_format = {**field_format, "time": time_format}
@@ -466,9 +466,9 @@ class PmapAxis:
             nan_fn = getattr(jnp, f'nan{nm}')
             allnan_fn = compose(pax_fn, nan_fn)
             object.__setattr__(self, f"all_nan{nm}", allnan_fn)
-        object.__setattr__(self, "all_average", 
+        object.__setattr__(self, "all_average",
             lambda a, w: self.all_mean(a * w) / self.all_mean(w))
-        object.__setattr__(self, "all_nanaverage", 
+        object.__setattr__(self, "all_nanaverage",
             lambda a, w: self.all_nansum(a * w)
                          / self.all_nansum(~jnp.isnan(a) * w))
 

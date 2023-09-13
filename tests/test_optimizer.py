@@ -17,7 +17,7 @@ _key0 = jax.random.PRNGKey(0)
 def _train(nsteps, optimizer, sampler, params, key, multi_device=False):
     """Train a model with KFAC and return params and loss for all steps."""
     # Distribute
-    n_device = jax.device_count() if multi_device else 1
+    # n_device = jax.device_count() if multi_device else 1
     if multi_device:
         params = kfac_jax.utils.replicate_all_local_devices(params)
         key = kfac_jax.utils.make_different_rng_key_on_all_devices(key)
@@ -49,7 +49,7 @@ def _train(nsteps, optimizer, sampler, params, key, multi_device=False):
     return loss_list, params
 
 
-@pytest.mark.parametrize("name", ["adam"]) # no kfac as it seems not working on linear case 
+@pytest.mark.parametrize("name", ["adam"]) # no kfac as it seems not working on linear case
 @pytest.mark.parametrize("multi_device", [False, True])
 def test_optimizer_linear(name, multi_device):
 
@@ -72,7 +72,7 @@ def test_optimizer_linear(name, multi_device):
     loss_and_grad = jax.value_and_grad(loss_fn)
 
     optimizer = build_optimizer(
-        loss_and_grad, 
+        loss_and_grad,
         name=name,
         lr_schedule=lambda x: 1e-1,
         value_func_has_aux=False,
@@ -80,7 +80,7 @@ def test_optimizer_linear(name, multi_device):
         value_func_has_state=False,
         multi_device=multi_device,
         pmap_axis_name=PAXIS.name)
-    
+
     n_sample = 1000
     def sampler(key):
         return jax.random.uniform(key, (n_sample, 1))

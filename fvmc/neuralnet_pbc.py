@@ -27,7 +27,7 @@ def raw_features_pbc(r, x, latvec, n_freq):
     d_frac = disp @ invvec
     d_hsin = jnp.sin(jnp.pi * d_frac) @ latvec/jnp.pi
     dist = jnp.linalg.norm(
-        d_hsin + jnp.eye(n_p)[..., None], 
+        d_hsin + jnp.eye(n_p)[..., None],
         keepdims=True, axis=-1) * (1.0 - jnp.eye(n_p)[..., None])
     freqs = jnp.arange(1, n_freq+1).reshape(-1, 1)
     radfreqs = 2 * jnp.pi * freqs
@@ -56,7 +56,7 @@ def gen_kidx(n_d, n_k, close_shell=True):
     else:
         shell_idx = onp.nonzero(k2 <= k2[sidx[n_k-1]])
         return kall[shell_idx]
-    
+
 
 class PbcEnvelope(nn.Module):
     spins: tuple[int, int]
@@ -111,7 +111,7 @@ class PbcEnvelope(nn.Module):
         ev_up, ev_dn = jnp.split(ev_1b, [n_up], axis=0)
         evlp = (ev_up[:, None, :] * ev_dn.conj())
         return evlp.transpose(2, 0, 1) # [n_out, n_up, n_dn]
-    
+
     def _diag_pair(self, k, x):
         n_up, n_dn = self.spins
         x_up, x_dn = jnp.split(x, [n_up], axis=0)
@@ -127,7 +127,7 @@ class PbcEnvelope(nn.Module):
         # evlp: [n_up, n_dn, n_out]
         evlp = linear_map(pw_kx)
         return evlp.transpose(2, 0, 1) # [n_out, n_up, n_dn]
-    
+
     def _general_pair(self, k, x):
         n_up, n_dn = self.spins
         n_f = k.shape[0] if self.use_complex else k.shape[0] * 2
@@ -208,15 +208,15 @@ class FermiNetPbc(FullWfn):
 
         h1, h2, dmat = raw_features_pbc(r, x, self.cell, self.raw_freq)
         if self.type_embedding > 0:
-            type_embd = self.param("type_embedding", 
-                nn.initializers.normal(1.0), 
+            type_embd = self.param("type_embedding",
+                nn.initializers.normal(1.0),
                 (len(split_sec), self.type_embedding), _t_real)
             h1 = jnp.concatenate([
                 h1, jnp.repeat(type_embd, split_sec, axis=0)
             ], axis=1)
 
         for ii, (sdim, pdim) in enumerate(self.hidden_dims):
-            flargs = ({**self.fermilayer, "h2_convolution": False} 
+            flargs = ({**self.fermilayer, "h2_convolution": False}
                       if ii == 0 else self.fermilayer)
             flayer = FermiLayer(
                 single_size=sdim,
@@ -231,7 +231,7 @@ class FermiNetPbc(FullWfn):
         h1n, h1e = jnp.split(h1, [n_nucl], axis=0)
         h2e = h2[-n_elec:, -n_elec:]
 
-        geminal_map = GeminalMap(self.spins, self.cell, 
+        geminal_map = GeminalMap(self.spins, self.cell,
                                  self.determinants)
         geminals = geminal_map(h1e, h2e)
 
@@ -248,7 +248,7 @@ class FermiNetPbc(FullWfn):
         sign, logpsi = sign[0], logpsi[0]
 
         jastrow = build_mlp([h1.shape[-1]] * self.jastrow_layers + [1],
-            residual=True, activation=self.activation, 
+            residual=True, activation=self.activation,
             rescale=self.rescale_residual, param_dtype=_t_real)
         jastrow_weight = self.param(
             "jastrow_weights", nn.initializers.zeros, ())
@@ -267,11 +267,11 @@ class FermiNetPbc(FullWfn):
         # logpsi += cusp(d_ee=dmat[n_nucl:, n_nucl:, -1])
 
         return sign, logpsi
-    
+
 
 class NucleiGaussianSlaterPbc(FullWfn):
     r"""Gaussian for nuclei wavefunctions with Slater determinant exchange
-    
+
     The wavefunction is given by Det_ij{ exp[-(r_i - r0_j)^2 / (2 * sigma_j^2)] }
     """
 
@@ -284,7 +284,7 @@ class NucleiGaussianSlaterPbc(FullWfn):
         del x
         # r0: [n_nucl, 3], sigma: [n_nucl, 1]
         r0 = self.param("r0", fix_init, self.init_r0, _t_real)
-        sigma = self.param("sigma", fix_init, 
+        sigma = self.param("sigma", fix_init,
                            jnp.reshape(self.init_sigma, (-1, 1)), _t_real)
         # pbc displacement as L/\pi * sin(\pi/L * d)
         latvec = self.cell

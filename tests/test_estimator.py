@@ -39,7 +39,7 @@ def test_eval_local_shape(pbc):
     ndim = nuclei.shape[-1]
     cell = jnp.eye(ndim) * 10 if pbc else None
     eval_local = build_eval_local_elec(model, elems, nuclei, cell)
-    
+
     a = None
     x = make_test_x()
     eloc, sign, logf = eval_local(a, x)
@@ -58,7 +58,7 @@ def test_eval_local_full_shape(pbc):
     ndim = r.shape[-1]
     cell = jnp.eye(ndim) * 10 if pbc else None
     eval_local = build_eval_local_full(model, elems, cell)
-    
+
     a = None
     x = make_test_x()
     eloc, sign, logf = eval_local(a, (r,x))
@@ -96,14 +96,14 @@ def test_eval_total(clipping, weighted):
     target_energy = target_local_energies.mean()
     target_variance = target_local_energies.var()
     tv = jnp.abs(target_local_energies - target_energy).mean()
-    clipped_local_energies = (jnp.clip(target_local_energies, 
+    clipped_local_energies = (jnp.clip(target_local_energies,
         target_energy-clipping*tv, target_energy+clipping*tv)
         if clipping and clipping > 0 else target_local_energies)
     target_grad_energy = 2.0 * jnp.mean(
         (clipped_local_energies - target_energy) * log_psi_grad_a
     )
-    
-    eval_total = build_eval_total(eval_local, clipping, 
+
+    eval_total = build_eval_total(eval_local, clipping,
                     center_shifting=False, use_weighted=weighted)
     eval_total_grad = jax.value_and_grad(eval_total, has_aux=True)
 

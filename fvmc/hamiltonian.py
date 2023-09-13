@@ -52,14 +52,14 @@ def calc_ke_elec(log_psi, x):
         loop_fn = lambda i, val: val + dgrad_f(eye[i])[i]
         laplacian = (grad_value**2).sum() + lax.fori_loop(0, ncoord, loop_fn, 0.0)
         return laplacian
-    
+
     if x.ndim == 2:
         lapl_fn = _lapl_over_psi
     elif x.ndim == 3:
         lapl_fn = jax.vmap(_lapl_over_psi)
     else:
         raise ValueError(f"only support x with ndim equals 2 or 3, get {x.ndim}")
-    
+
     return -0.5 * lapl_fn(x)
 
 
@@ -82,41 +82,40 @@ def calc_ke_full(log_psi, mass, r, x):
         flat_in, unravel = ravel_pytree((r, x))
         ncoord = flat_in.size
         assert mass.size == r.shape[0]
-        
+
         f = lambda flat_in: log_psi(*unravel(flat_in)) # take flattened x
         grad_f = adaptive_grad(f)
         grad_value, dgrad_f = jax.linearize(grad_f, flat_in)
 
-        minv = jnp.concatenate([jnp.repeat(1/mass, r.shape[1]), 
+        minv = jnp.concatenate([jnp.repeat(1/mass, r.shape[1]),
                                 jnp.ones(x.size)])
         minv_mat = jnp.diag(minv)
         loop_fn = lambda i, val: val + dgrad_f(minv_mat[i])[i]
-        laplacian = ((minv * grad_value**2).sum() 
+        laplacian = ((minv * grad_value**2).sum()
                      + lax.fori_loop(0, ncoord, loop_fn, 0.0))
         return laplacian
-    
+
     if r.ndim == x.ndim == 2:
         lapl_fn = _lapl_over_psi
     elif r.ndim == x.ndim == 3:
         lapl_fn = jax.vmap(_lapl_over_psi)
     else:
         raise ValueError(f"unsupported r.ndim: {r.ndim} and x.ndim: {x.ndim}")
-    
+
     return -0.5 * lapl_fn(r, x)
 
 
 def calc_local_energy(log_psi, elems, r, x, cell=None, nuclei_ke=False):
-    # do not use this one directly in QMC with a fixed cell. 
+    # do not use this one directly in QMC with a fixed cell.
     # It's slow as it will rebuild the g points every time.
     if nuclei_ke:
         mass = get_nuclei_mass(elems)
         ke = calc_ke_full(log_psi, mass, r, x)
     else:
-        ke = calc_ke_elec(log_psi, x) 
+        ke = calc_ke_elec(log_psi, x)
     if cell is not None:
         from .ewaldsum import EwaldSum
         pe = EwaldSum(cell).calc_pe(elems, r, x)
     else:
         pe = calc_pe(elems, r, x)
     return ke + pe
-    

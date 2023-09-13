@@ -102,7 +102,7 @@ def test_kinetic_energy_compelx(p):
         exp = jnp.exp(x @ p).reshape(1, 1)
         sign, logd = jnp.linalg.slogdet(exp)
         return logd + (jnp.log(sign) if jnp.iscomplexobj(sign) else 0.)
-    
+
     key0 = jax.random.PRNGKey(0)
     xx = jax.random.uniform(key0, (1, p.shape[-1]))
 
@@ -121,4 +121,3 @@ def test_local_energy_shape(x):
 
     le = calc_local_energy(log_psi, elems, nuclei, x)
     assert le.shape == f(None, x).shape
-    

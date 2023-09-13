@@ -3,7 +3,7 @@ from ml_collections import ConfigDict
 
 def default() -> ConfigDict:
     return ConfigDict({
-        
+
         "seed": 0,
 
         "verbosity": "WARNING",

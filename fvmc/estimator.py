@@ -33,7 +33,7 @@ def get_log_psi(model_apply, params):
 
 def build_eval_local_elec(model, elems, nuclei, cell=None):
     """create a function that evaluates local energy, sign and log abs of wavefunction.
-    
+
     Args:
         model (nn.Module): a flax module that calculates the sign and log abs of wavefunction.
             `model.apply` should have signature (params, x) -> (sign(f(x)), log|f(x)|)
@@ -42,10 +42,10 @@ def build_eval_local_elec(model, elems, nuclei, cell=None):
         cell (Optional Array): if not None, using ewald summation for potential energy in PBC
 
     Returns:
-        Callable with signature (params, x) -> (eloc, sign, logf) that evaluates 
+        Callable with signature (params, x) -> (eloc, sign, logf) that evaluates
         local energy, sign and log abs of wavefunctions on given parameters and configurations.
     """
-    
+
     calc_pe_adapt = EwaldSum(cell).calc_pe if cell is not None else calc_pe
 
     def eval_local(params, x):
@@ -61,7 +61,7 @@ def build_eval_local_elec(model, elems, nuclei, cell=None):
 
 def build_eval_local_full(model, elems, cell=None):
     """create a function that evaluates local energy, sign and log abs of full wavefunction.
-    
+
     Args:
         model (nn.Module): a flax module that calculates the sign and log abs of wavefunction.
             `model.apply` should have signature (params, r, x) -> (sign(f), log|f|)
@@ -69,7 +69,7 @@ def build_eval_local_full(model, elems, cell=None):
         cell (Optional Array): if not None, using ewald summation for potential energy in PBC
 
     Returns:
-        Callable with signature (params, conf) -> (eloc, sign, logf) that evaluates 
+        Callable with signature (params, conf) -> (eloc, sign, logf) that evaluates
         local energy, sign and log abs of wavefunctions on given parameters and conf.
         `conf` here is a tuple of (r, x) contains nuclei (r) and electron (x) positions.
     """
@@ -89,8 +89,8 @@ def build_eval_local_full(model, elems, cell=None):
     return eval_local
 
 
-def build_eval_total(eval_local_fn, energy_clipping=None, 
-                     clip_from_median=False, center_shifting=False, 
+def build_eval_total(eval_local_fn, energy_clipping=None,
+                     clip_from_median=False, center_shifting=False,
                      pmap_axis_name=PMAP_AXIS_NAME, use_weighted=False):
     """Create a function that evaluates quantities on the whole batch of samples.
 
@@ -99,7 +99,7 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
     and the second element a dict contains multiple statistical quantities of the samples.
 
     Args:
-        eval_local_fn (Callable): callable which evaluates 
+        eval_local_fn (Callable): callable which evaluates
             the local energy, sign and log of absolute value of wfn.
         energy_clipping (float, optional): If greater than zero, clip local energies that are
             outside [E_t - n D, E_t + n D], where E_t is the mean local energy, n is
@@ -123,10 +123,10 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
     """
     if use_weighted:
         return build_eval_total_weighted(
-            eval_local_fn, 
+            eval_local_fn,
             energy_clipping,
             clip_from_median,
-            center_shifting, 
+            center_shifting,
             pmap_axis_name)
 
     paxis = PmapAxis(pmap_axis_name)
@@ -139,10 +139,10 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
 
             (\psi #[\psi^c (E_l^c - E_tot)]) / (#[\psi \psi^c]) + h.c.
 
-        where \psi is the wavefunction, E_l is the (clipped) local energy, 
+        where \psi is the wavefunction, E_l is the (clipped) local energy,
         E_tot is the estimated total energy, ^c stands for conjugation,
-        and #[...] stands for stop gradient. One can easily check that 
-        this form will give the correct gradient estimation. 
+        and #[...] stands for stop gradient. One can easily check that
+        this form will give the correct gradient estimation.
         Note that instead of doing the h.c., we are using 2 * Real[...].
         """
         # data is a tuple of sample and log of sampling weight
@@ -162,7 +162,7 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
         # clipping the local energy (for making the loss)
         eclip = eloc
         if energy_clipping and energy_clipping > 0:
-            ecenter = (jnp.median(paxis.all_gather(eloc.real)) 
+            ecenter = (jnp.median(paxis.all_gather(eloc.real))
                        if clip_from_median else etot)
             tv = paxis.all_nanmean(jnp.abs(eloc - etot))
             eclip = clip_around(eloc, ecenter, energy_clipping * tv, stop_gradient=True)
@@ -172,14 +172,14 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
         # 2 * real for h.c.
         kfac_jax.register_squared_error_loss(logf.real[:, None])
         loss = paxis.all_nanmean(2 * (logf * ediff).real)
-        
+
         return loss, aux
 
     return eval_total
 
 
-def build_eval_total_weighted(eval_local_fn, energy_clipping=None, 
-                              clip_from_median=False, center_shifting=True, 
+def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
+                              clip_from_median=False, center_shifting=True,
                               pmap_axis_name=PMAP_AXIS_NAME):
     """Create a function that evaluates quantities on the whole batch of samples.
 
@@ -188,7 +188,7 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
     and the second element a dict contains multiple statistical quantities of the samples.
 
     Args:
-        eval_local_fn (Callable): callable which evaluates 
+        eval_local_fn (Callable): callable which evaluates
             the local energy, sign and log of absolute value of wfn.
         energy_clipping (float, optional): If greater than zero, clip local energies that are
             outside [E_t - n D, E_t + n D], where E_t is the mean local energy, n is
@@ -219,10 +219,10 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
 
             (\psi #[\psi^c (E_l^c - E_tot)]) / (#[\psi \psi^c]) + h.c.
 
-        where \psi is the wavefunction, E_l is the (clipped) local energy, 
+        where \psi is the wavefunction, E_l is the (clipped) local energy,
         E_tot is the estimated total energy, ^c stands for conjugation,
-        and #[...] stands for stop gradient. One can easily check that 
-        this form will give the correct gradient estimation. 
+        and #[...] stands for stop gradient. One can easily check that
+        this form will give the correct gradient estimation.
         Note that instead of doing the h.c., we are using 2 * Real[...].
         """
         # data is a tuple of sample and log of sampling weight
@@ -233,7 +233,7 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
             logf += jnp.log(sign)
 
         # calculating relative weights for stats
-        rel_w, lshift = exp_shifted(2*logf.real - logsw, 
+        rel_w, lshift = exp_shifted(2*logf.real - logsw,
             normalize="mean", pmap_axis_name=paxis.name)
         # compute total energy
         etot = paxis.all_nanaverage(eloc, rel_w)
@@ -248,13 +248,13 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
         # clipping the local energy (for making the loss)
         eclip = eloc
         if energy_clipping and energy_clipping > 0:
-            ecenter = (jnp.median(paxis.all_gather(eloc.real)) 
+            ecenter = (jnp.median(paxis.all_gather(eloc.real))
                        if clip_from_median else etot)
             tv = paxis.all_nanaverage(jnp.abs(eloc - etot), rel_w)
             eclip = clip_around(eloc, ecenter, energy_clipping * tv, stop_gradient=True)
         # make the conjugated term (with stopped gradient)
         eclip_c, sign_c, logf_c = map(
-            lambda x: lax.stop_gradient(x.conj()), 
+            lambda x: lax.stop_gradient(x.conj()),
             (eclip, sign, logf))
         # make normalized psi_sqr, grad w.r.t it is equivalent to grad of log psi
         log_psi2_rel = logf + logf_c - logsw
@@ -265,9 +265,9 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
         ediff = lax.stop_gradient(eclip_c - ebar.conj())
         # 2 * real for h.c.
         kfac_jax.register_squared_error_loss(psi_sqr.real[:, None])
-        loss = (paxis.all_nansum(2 * (psi_sqr * ediff).real) 
+        loss = (paxis.all_nansum(2 * (psi_sqr * ediff).real)
                 / paxis.all_nansum(~jnp.isnan(ediff) * rel_w_d))
-        
+
         return loss, aux
 
     return eval_total

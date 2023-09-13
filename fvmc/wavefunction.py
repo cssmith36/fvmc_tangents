@@ -6,7 +6,7 @@ import jax
 from flax import linen as nn
 from jax import numpy as jnp
 
-from fvmc.utils import Array
+#from fvmc.utils import Array
 
 from .utils import (Array, _t_real, build_mlp, cdist, displace_matrix,
                     fix_init, parse_spin, pdist)
@@ -27,14 +27,14 @@ class FullWfn(nn.Module, abc.ABC):
     def __call__(self, r: Array, x: Array) -> Tuple[Array, Array]:
         """Take nuclei position r and electron position x, return sign and log|psi|"""
         raise NotImplementedError
-    
+
 
 class ElecWfn(nn.Module, abc.ABC):
     @abc.abstractmethod
     def __call__(self, x: Array) -> Tuple[Array, Array]:
         """Take only the electron position x, return sign and log|psi|"""
         raise NotImplementedError
-    
+
 
 class FakeModel(NamedTuple):
     fn: Callable
@@ -49,7 +49,7 @@ class FakeModel(NamedTuple):
 
 class FixNuclei(ElecWfn):
     r"""Module warpper that fix the nuclei positions for a full model
-    
+
     This class takes a full wavefunction model f(r,x) of r (nuclei) and x (electrons)
     and the fixed nuclei positions r_0, and return a new model which only depends on x.
     Think it as a partial warpper that works on nn.Module
@@ -63,9 +63,9 @@ class FixNuclei(ElecWfn):
 
 class ProductModel(FullWfn):
     r"""Pruduct of multiple model results.
-    
-    Assuming the models returns in log scale. 
-    The signature of each submodel can either be pure: x -> log(f(x)) 
+
+    Assuming the models returns in log scale.
+    The signature of each submodel can either be pure: x -> log(f(x))
     or with sign: x -> sign(f(x)), log(|f(x)|).
     The model will return sign if any of its submodels returns sign.
     """
@@ -86,7 +86,7 @@ class ProductModel(FullWfn):
                 with_sign = True
             else:
                 logf += result
-        
+
         if with_sign:
             return sign, logf
         else:
@@ -96,7 +96,7 @@ class ProductModel(FullWfn):
 # follow the TwoBodyExpDecay class in vmcnet
 class SimpleJastrow(nn.Module):
     r"""Isotropic exponential decay two-body Jastrow model.
-    
+
     The decay is isotropic in the sense that each electron-nuclei and electron-electron
     term is isotropic, i.e. radially symmetric. The computed interactions are:
 
@@ -124,7 +124,7 @@ class SimpleJastrow(nn.Module):
         corr_ee = jnp.sum(jnp.triu(d_ee) * q, axis=-1)
         return jnp.sum(corr_ee - corr_ei, axis=-1) + scale
 
-    
+
 class SimpleOrbital(nn.Module):
     r"""Single particle orbital by a simple resnet
 
@@ -138,12 +138,12 @@ class SimpleOrbital(nn.Module):
 
     @nn.compact
     def __call__(self, r: Array, x: Array) -> Array:
-        n_el = x.shape[-2]
+        # n_el = x.shape[-2]
         n_dim = x.shape[-1]
         n_ion = r.shape[-2]
         n_feature = n_ion * (n_dim + 1)
         resnet = build_mlp(
-            [n_feature]*self.n_hidden + [self.n_orb], 
+            [n_feature]*self.n_hidden + [self.n_orb],
             residual=True, activation=self.activation, param_dtype=_t_real)
         # build input features
         disp_ei = displace_matrix(x, r) # [..., n_el, n_ion, 3]
@@ -156,7 +156,7 @@ class SimpleOrbital(nn.Module):
 
 class SimpleSlater(FullWfn):
     r"""Slater determinant from single particle orbitals
-    
+
     Separate the electrons into different spins and calculate orbitals for both.
     if full_det is True, use one large determinant. Otherwise use two small ones.
     Return sign and log of determinant when called.
@@ -172,7 +172,7 @@ class SimpleSlater(FullWfn):
         n_el = x.shape[-2]
         n_up, n_dn = self.spins
         assert n_up + n_dn == n_el
-        
+
         if self.orbital_type == "simple":
             OrbCls = SimpleOrbital
         else:
@@ -190,11 +190,11 @@ class SimpleSlater(FullWfn):
             sign_up, ldet_up = jnp.linalg.slogdet(orb_up)
             sign_dn, ldet_dn = jnp.linalg.slogdet(orb_dn)
             return sign_up * sign_dn, ldet_up + ldet_dn
-        
+
 
 class NucleiGaussian(FullWfn):
     r"""Gaussian for nuclei wavefunctions, centered on trainable sites
-    
+
     The log wavefunction is given by - \sum_i (r_i - r0_i)^2 / (2 * sigma_i^2)
     """
 
@@ -205,14 +205,14 @@ class NucleiGaussian(FullWfn):
     def __call__(self, r: Array, x: Array) -> Tuple[Array, Array]:
         del x
         r0 = self.param("r0", fix_init, self.init_r0, _t_real)
-        sigma = self.param("sigma", fix_init, 
+        sigma = self.param("sigma", fix_init,
                            jnp.reshape(self.init_sigma, (-1, 1)), _t_real)
         return 1., -0.5 * jnp.sum(((r - r0) / sigma)**2)
-    
+
 
 class NucleiGaussianSlater(FullWfn):
     r"""Gaussian for nuclei wavefunctions with Slater determinant exchange
-    
+
     The wavefunction is given by Det_ij{ exp[-(r_i - r0_j)^2 / (2 * sigma_j^2)] }
     """
 
@@ -224,7 +224,7 @@ class NucleiGaussianSlater(FullWfn):
         del x
         # r0: [n_nucl, 3], sigma: [n_nucl, 1]
         r0 = self.param("r0", fix_init, self.init_r0, _t_real)
-        sigma = self.param("sigma", fix_init, 
+        sigma = self.param("sigma", fix_init,
                            jnp.reshape(self.init_sigma, (-1, 1)), _t_real)
         # exps: [n_nucl, n_nucl]
         exps = jnp.exp(-0.5 * jnp.sum(((r[:, None] - r0) / sigma)**2, -1))

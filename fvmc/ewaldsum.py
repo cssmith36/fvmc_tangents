@@ -35,21 +35,21 @@ from .utils import displace_matrix
 class EwaldSum:
     """
     Using the Ewald summation to calculate the Coulomb potential
-    
-    Unlike original version, this simplified one treats 
+
+    Unlike original version, this simplified one treats
     nuclei and electrons on the equal footing and calculate at once.
     """
 
     def __init__(self, latvec, g_max=200, n_lat=1, g_threshold=1e-12, alpha=None):
         """
-        Initilization of the Ewald summation class by preparing 
+        Initilization of the Ewald summation class by preparing
         pbc displace function, lattice displacements, and reciporcal g points
 
         Args:
-            latvec (Array): 3x3 matrix with each row a lattice vector 
+            latvec (Array): 3x3 matrix with each row a lattice vector
             g_max (int): How far to take reciprocal sum; probably never needs to be changed.
             n_lat (int): How far to take real-space sum; probably never needs to be changed.
-            g_threshold (float): ignore g points below this value. Following DeepSolid value. 
+            g_threshold (float): ignore g points below this value. Following DeepSolid value.
         """
         self.latvec = jnp.asarray(latvec)
         self.recvec = jnp.linalg.inv(latvec).T
@@ -79,7 +79,7 @@ class EwaldSum:
         denom = dm1 * self.cellvolume * self.alpha ** dm1
         e_charged = - jnp.pi ** (dm1/2.) / denom * q_sum ** 2
         return e_self, e_charged
-    
+
     def real_part(self, charge, pos):
         if charge.shape[0] < 2:
             return 0
@@ -90,19 +90,19 @@ class EwaldSum:
         e_real = jnp.sum(jnp.triu(charge_ij * jax.lax.erfc(self.alpha * r) / r, k=1))
         e_real += 0.5 * jnp.sum(charge ** 2) * self.simg_const # self image
         return e_real
-    
+
     def recip_part(self, charge, pos):
         g_dot_r = self.gpoints @ pos.T # [n_gpoints, n_particle]
         sfactor = jnp.exp(1j * g_dot_r) @ charge # [n_gpoints,]
         e_recip = self.gweight @ (sfactor * sfactor.conj())
         return e_recip.real
-    
+
     def energy(self, charge, pos):
         """Calculation the Coulomb energy from point charges and their positions"""
         return (sum(self.const_part(charge))
-                + self.real_part(charge, pos) 
+                + self.real_part(charge, pos)
                 + self.recip_part(charge, pos))
-    
+
     def calc_pe(self, elems, r, x):
         """Warpped interface for potential energy from nuclei and electrons"""
         assert elems.shape[0] == r.shape[0]
@@ -126,7 +126,7 @@ def gen_pbc_disp_fn(latvec):
         latdiag = jnp.diagonal(latvec)
         shifted_disp = (disp + latdiag/2) % latdiag - latdiag/2
         return shifted_disp
-    
+
     def orthogonal_disp(xa, xb):
         disp = xa - xb
         frac_disp = disp @ invvec
@@ -154,7 +154,7 @@ def gen_positive_gpoints(recvec, g_max):
         indexing='ij'
     ) for ii in range(n_d)]
     gpts = jnp.concatenate([
-        jnp.stack(g, axis=-1).reshape(-1, n_d) 
+        jnp.stack(g, axis=-1).reshape(-1, n_d)
         for g in gpts_list
     ], axis=0)
     gpoints = 2 * jnp.pi * gpts @ recvec

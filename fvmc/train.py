@@ -130,9 +130,9 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
                                      nuclei_module=nuclei_part, **ansatz_cfg)
         else:
             if cell is None:
-                raw_ansatz = FermiNet(elems=elems, spins=n_elec, **ansatz_cfg) 
+                raw_ansatz = FermiNet(elems=elems, spins=n_elec, **ansatz_cfg)
             else:
-                raw_ansatz = FermiNetPbc(elems=elems, spins=n_elec, 
+                raw_ansatz = FermiNetPbc(elems=elems, spins=n_elec,
                                          cell=cell, **ansatz_cfg)
             ansatz = FixNuclei(raw_ansatz, nuclei)
     log_prob_fn = log_prob_from_model(ansatz)
@@ -140,7 +140,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
     # make estimators
     local_fn = (build_eval_local_full(ansatz, elems, cell) if fully_quantum
                 else build_eval_local_elec(ansatz, elems, nuclei, cell))
-    loss_fn = build_eval_total(local_fn, 
+    loss_fn = build_eval_total(local_fn,
         pmap_axis_name=PAXIS.name, **loss_cfg)
     loss_and_grad = jax.value_and_grad(loss_fn, has_aux=True)
 
@@ -154,8 +154,8 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
     conf_init_fn = sample_cfg.get("conf_init_fn", build_conf_init_fn(
         elems, nuclei, sum(n_elec), with_r=fully_quantum))
     raw_sampler = build_sampler(
-        log_prob_fn, 
-        conf_init_fn, 
+        log_prob_fn,
+        conf_init_fn,
         name=sample_cfg.sampler,
         **sample_cfg.get(sample_cfg.sampler, {}))
     sampler = make_multistep(raw_sampler, n_step=n_multistep, concat=False)
@@ -165,7 +165,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
     # make optimizer
     lr_schedule = build_lr_schedule(**optimize_cfg.lr)
     optimizer = build_optimizer(
-        loss_and_grad, 
+        loss_and_grad,
         name=optimize_cfg.optimizer,
         lr_schedule=lr_schedule,
         value_func_has_aux=True,
@@ -177,7 +177,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
         grad_clipping=optimize_cfg.get("grad_clipping", None),
         **optimize_cfg.get(optimize_cfg.optimizer, {}))
 
-    # make training states 
+    # make training states
     if "states" in restart_cfg and restart_cfg.states:
         LOGGER.info("Loading parameters and states from saved file")
         state_path = multi_process_name(restart_cfg.states)
@@ -196,7 +196,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
         else:
             key, parkey, skey = jax.random.split(key, 3) # init use single key
             fake_input = conf_init_fn(skey)
-            params = (ansatz.init(parkey, *fake_input) if fully_quantum 
+            params = (ansatz.init(parkey, *fake_input) if fully_quantum
                       else ansatz.init(parkey, fake_input))
         if multi_device:
             params = kfac_jax.utils.replicate_all_local_devices(params)
@@ -242,9 +242,9 @@ def run(step_fn, train_state, iterations, log_cfg):
     log_cfg = ConfigDict(log_cfg)
     if jax.process_index() == 0:
         writer = SummaryWriter(log_cfg.stat_path)
-    print_fields = {"step": "", 
-                    "e_tot": ".4f", "std_e": ".3e", 
-                    "acc": ".2f", "lr": ".2e"} 
+    print_fields = {"step": "",
+                    "e_tot": ".4f", "std_e": ".3e",
+                    "acc": ".2f", "lr": ".2e"}
     printer = Printer(print_fields, time_format=".2f")
 
     # mysterious step to prevent kfac memory error
@@ -269,22 +269,22 @@ def run(step_fn, train_state, iterations, log_cfg):
                            opt_info["aux"]["nans"], ii, opt_info['step']-1)
 
         # log stats
-        if ((ii % log_cfg.stat_every == 0 or ii == iterations-1) 
+        if ((ii % log_cfg.stat_every == 0 or ii == iterations-1)
           and jax.process_index() == 0): # only print for process 0 (all same)
             acc_rate = PAXIS.all_mean(mc_info["is_accepted"])
-            stat_dict = {"step": opt_info["step"]-1, **opt_info["aux"], 
+            stat_dict = {"step": opt_info["step"]-1, **opt_info["aux"],
                          "acc": acc_rate, "lr":opt_info["learning_rate"]}
             stat_dict = jax.tree_map( # collect from potential pmap
                 lambda x: x[0] if jnp.ndim(x) > 0 else x, stat_dict)
             printer.print_fields(stat_dict)
             for k,v in stat_dict.items():
                 writer.add_scalar(k, v, ii)
-        
+
         # checkpoint
         if ii % log_cfg.ckpt_every == 0 or ii == iterations-1:
             ckpt_path = multi_process_name(log_cfg.ckpt_path)
             save_checkpoint(
-                ckpt_path, 
+                ckpt_path,
                 tuple(trim_training_state(train_state)),
                 keep=log_cfg.ckpt_keep)
 
@@ -306,10 +306,10 @@ def main(cfg):
 
     key = jax.random.PRNGKey(cfg.seed) if 'seed' in cfg else None
     system, ansatz, loss_fn, sampler, optimizer, train_state \
-        = prepare(cfg.system, cfg.ansatz, cfg.sample, cfg.loss, cfg.optimize, 
+        = prepare(cfg.system, cfg.ansatz, cfg.sample, cfg.loss, cfg.optimize,
                   cfg.fully_quantum, key, cfg.restart, cfg.multi_device)
 
     training_step = build_training_step(sampler, optimizer)
     train_state = run(training_step, train_state, cfg.optimize.iterations, cfg.log)
-    
+
     return train_state

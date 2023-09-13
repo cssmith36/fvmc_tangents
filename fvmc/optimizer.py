@@ -116,7 +116,8 @@ class OptaxWrapper:
         self.multi_device = multi_device
         self._pmap_axis_name = pmap_axis_name
         if self.multi_device:
-            self._jit_step = jax.pmap(self._step, axis_name=self._pmap_axis_name, donate_argnums=list(range(5)))
+            self._jit_step = jax.pmap(self._step, axis_name=self._pmap_axis_name,
+                donate_argnums=list(range(5)))
         else:
             self._jit_step = jax.jit(self._step)
 
@@ -268,7 +269,7 @@ def build_optimizer(
         from optax._src import alias as optax_alias
 
         using_sr = name.lower() in ("sr", "ngd")
-        clip_transform = (optax.adaptive_grad_clip(grad_clipping) 
+        clip_transform = (optax.adaptive_grad_clip(grad_clipping)
                           if grad_clipping else optax.identity())
         if using_sr:
             assert log_prob_func is not None
@@ -291,7 +292,7 @@ def build_optimizer(
                 getattr(optax_alias, name)(learning_rate, **kwargs))
 
         optax_optimizer = optax.inject_hyperparams(opt_factory)(lr_schedule)
-        
+
         return OptaxWrapper(value_and_grad_func,
                             optax_optimizer=optax_optimizer,
                             value_func_has_aux=value_func_has_aux,

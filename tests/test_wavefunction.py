@@ -49,7 +49,7 @@ def test_jastrow():
     nuclei, elems, x = make_collapse_conf()
     jastrow = SimpleJastrow(elems)
     params = jastrow.init(_key0, nuclei, x)
-    
+
     actual_out = jastrow.apply(params, nuclei, x)
     assert actual_out.shape == (1,)
     np.testing.assert_allclose(actual_out[0], 0.)
@@ -76,14 +76,14 @@ def test_slater_antisymm(full_det, spin):
     nuclei, elems, x = make_collapse_conf()
     n_batch, n_el = x.shape[:-1]
     spins = (n_el // 2, n_el - n_el // 2)
-    slater = SimpleSlater(spins=spins, full_det=full_det, 
+    slater = SimpleSlater(spins=spins, full_det=full_det,
                           orbital_args={"n_hidden": 1})
     params = slater.init(_key0, nuclei, x)
 
     x = x + jax.random.normal(_key0, x.shape)
     iperm = jnp.arange(n_el, dtype=int).at[:2].set([1,0])
     px = x[:, iperm, :]
-    
+
     sign1, logf1 = slater.apply(params, nuclei, x)
     sign2, logf2 = slater.apply(params, nuclei, px)
     assert sign1.shape == logf1.shape == (n_batch,)
