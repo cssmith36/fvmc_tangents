@@ -6,6 +6,6 @@
 #SBATCH --gres=gpu:2
 
 conda deactivate
-conda activate vmc
+conda activate jax # activate your favorite jax env
 
-srun -n 2 --exclusive python -u run.py > log.out
+srun -n 2 python -u run.py > log.out

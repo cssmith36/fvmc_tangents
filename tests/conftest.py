@@ -4,7 +4,7 @@
 """Initial pytest configuration.
 On cpu, tests can run in an N-device regime, via the flag --chex_n_cpu_devices=N.
 Following the example in https://docs.pytest.org/en/latest/example/simple.html,
-tests marked with pytest.mark.slow will be skipped unless the --runslow option is
+tests marked with pytest.mark.slow will be skipped unless the --run-slow option is
 provided.
 """
 import jax

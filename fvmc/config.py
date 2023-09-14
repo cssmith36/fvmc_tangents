@@ -59,6 +59,8 @@ def default() -> ConfigDict:
             "ckpt_path": "checkpoint.pkl",
             "ckpt_every": 100,
             "ckpt_keep": 1,
+            "dump_every": 0,
+            "dump_path": "trajdump.npy",
             "hpar_path": "hparams.yaml",
         },
 

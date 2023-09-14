@@ -318,7 +318,7 @@ def build_blackjax(logdens_fn, shape_or_init, kernel="nuts", grad_clipping=None,
         state = state[1]
         state, info = kernel.step(key, state)
         return ((state.position, state),
-               (unravel(state.position), -state.potential_energy), info._asdict())
+                (unravel(state.position), -state.potential_energy), info._asdict())
 
     def refresh(state, params):
         sample = state[0]

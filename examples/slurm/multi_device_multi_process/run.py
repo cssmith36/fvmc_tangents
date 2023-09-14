@@ -1,7 +1,7 @@
-import fvmc
 import jax
-
 jax.distributed.initialize()
+
+import fvmc # noqa: E402
 
 cfg = fvmc.config.default()
 

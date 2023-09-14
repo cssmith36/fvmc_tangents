@@ -1,5 +1,6 @@
+import os
 from functools import partial
-from typing import NamedTuple, Tuple, Sequence, Optional
+from typing import NamedTuple, Optional, Sequence, Tuple
 
 import jax
 import kfac_jax
@@ -18,8 +19,8 @@ from .optimizer import build_lr_schedule, build_optimizer
 from .sampler import (build_conf_init_fn, build_sampler, make_batched,
                       make_multistep)
 from .utils import (PAXIS, Array, ArrayTree, Printer, PyTree, adaptive_split,
-                    cfg_to_yaml, load_pickle, multi_process_name,
-                    save_checkpoint)
+                    backup_if_exist, cfg_to_yaml, load_pickle,
+                    multi_process_name, save_checkpoint)
 from .wavefunction import (FixNuclei, NucleiGaussianSlater, ProductModel,
                            build_jastrow_slater, log_prob_from_model)
 
@@ -240,12 +241,23 @@ def run(step_fn, train_state, iterations, log_cfg):
     """run the optimization loop (sample + update)"""
 
     log_cfg = ConfigDict(log_cfg)
+
+    # tensorboard writer
     if jax.process_index() == 0:
         writer = SummaryWriter(log_cfg.stat_path)
+    # training log printer
     print_fields = {"step": "",
                     "e_tot": ".4f", "std_e": ".3e",
                     "acc": ".2f", "lr": ".2e"}
     printer = Printer(print_fields, time_format=".2f")
+    # sample trajectory dumper
+    dumper = None
+    if log_cfg.dump_every > 0 and log_cfg.dump_path:
+        from npy_append_array import NpyAppendArray
+        dump_path = multi_process_name(log_cfg.dump_path)
+        backup_if_exist(dump_path, prefix="bck")
+        assert not os.path.exists(dump_path)
+        dumper = NpyAppendArray(dump_path, delete_if_exists=True)
 
     # mysterious step to prevent kfac memory error
     train_state = jax.tree_map(jnp.copy, train_state)
@@ -260,13 +272,15 @@ def run(step_fn, train_state, iterations, log_cfg):
         # main training loop
         train_state, (mc_info, opt_info) = step_fn(train_state)
 
+        # nan check
         if not jax.tree_util.tree_all(
           jax.tree_map(lambda a: jnp.all(~jnp.isnan(a)), train_state.params)):
             raise ValueError(f"NaN found in params at step {ii} "
                              f"(log step {opt_info['step']-1})")
-        if opt_info["aux"]["nans"] > 0:
+        if jnp.any(opt_info["aux"]["nans"] > 0):
             LOGGER.warning("%d NaN(s) found in local energy at step %d (log step %d)",
-                           opt_info["aux"]["nans"], ii, opt_info['step']-1)
+                           opt_info["aux"]["nans"].sum(),
+                           ii, opt_info['step'].mean()-1)
 
         # log stats
         if ((ii % log_cfg.stat_every == 0 or ii == iterations-1)
@@ -280,16 +294,24 @@ def run(step_fn, train_state, iterations, log_cfg):
             for k,v in stat_dict.items():
                 writer.add_scalar(k, v, ii)
 
+        # dump traj
+        if dumper is not None and ii % log_cfg.dump_every == 0:
+            flat_sample = onp.asarray(train_state.mc_state[0][None, ...])
+            dumper.append(flat_sample) # [n_step, (n_device,) n_batch, n_coord]
+
         # checkpoint
         if ii % log_cfg.ckpt_every == 0 or ii == iterations-1:
             ckpt_path = multi_process_name(log_cfg.ckpt_path)
             save_checkpoint(
                 ckpt_path,
                 tuple(trim_training_state(train_state)),
-                keep=log_cfg.ckpt_keep)
+                max_keep=log_cfg.ckpt_keep)
 
     if jax.process_index() == 0:
         writer.close()
+    if dumper is not None:
+        dumper.close()
+
     return train_state
 
 

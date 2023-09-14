@@ -1,4 +1,5 @@
 import os
+import glob
 import pickle
 import time
 import dataclasses
@@ -228,13 +229,23 @@ def load_pickle(filename):
     with open(filename, 'rb') as file:
         return pickle.load(file)
 
-def save_checkpoint(filename, data, keep=1):
-    numlen = len(str(keep))
+
+def backup_if_exist(filename, max_keep=None, prefix=""):
+    idx_ptn = f"0{len(str(max_keep))}d" if max_keep is not None else "d"
+    last_idx = max([0] + [int(ss.removeprefix(f"{filename}.{prefix}"))
+                          for ss in glob.glob(f"{filename}.{prefix}*")]) + 1
+    if max_keep is not None:
+        last_idx = min(last_idx, max_keep - 1)
     fnames = [filename]
-    fnames += [f"{filename}.{ii:0{numlen}d}" for ii in range(1, keep)]
+    fnames += [f"{filename}.{prefix}{ii:{idx_ptn}}"
+               for ii in range(1, last_idx + 1)]
     for ii, fn in reversed(list(enumerate(fnames[:-1]))):
         if os.path.exists(fn):
             os.replace(fn, fnames[ii+1])
+
+
+def save_checkpoint(filename, data, max_keep=1):
+    backup_if_exist(filename, max_keep=max_keep)
     save_pickle(filename, data)
 
 
