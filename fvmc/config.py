@@ -48,7 +48,7 @@ def default() -> ConfigDict:
             "iterations": 100_000,
             "lr": {},
             "optimizer": "kfac",
-            "grad_clipping": 1., # will not work for kfac
+            "grad_clipping": None, # will not work for kfac
             "kfac": {},
             "sr": {},
         },

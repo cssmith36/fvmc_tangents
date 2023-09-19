@@ -81,6 +81,33 @@ def symmetrize(x):
     return (x + _H(x)) / 2
 
 
+def chol_qr(x, shift=None):
+    *_, m, n = x.shape
+    a = _H(x) @ x
+    if shift is None:
+        shift = 1.2e-15 * (m*n + n*(n+1)) * a.trace(0,-1,-2).max()
+    r = jsp.linalg.cholesky(a + shift * jnp.eye(n, dtype=x.dtype), lower=False)
+    q = lax.linalg.triangular_solve(r, x, left_side=False, lower=False)
+    return q, r
+
+
+def fast_svd(a):
+    """
+    SVD using the eigen-decomposition of A A^T or A^T A,
+    which appears to be much more efficient than jax.scipy.linalg.svd.
+    """
+    m, n = a.shape
+    if m < n:
+        a = _H(a)
+    s2, v = jax.scipy.linalg.eigh(a.T.dot(a))
+    s2, v = s2[::-1], v[:, ::-1]
+    s = jnp.sqrt(jnp.abs(s2))
+    u = a.dot(v/s)
+    if m < n:
+        return v, s, _H(u)
+    return u, s, _H(v)
+
+
 def r2c_grad(f, argnums=0, has_aux=False):
     if has_aux:
         return r2c_grad_with_aux(f, argnums=argnums)
@@ -443,10 +470,10 @@ class Printer:
 
 def wrap_if_pmap(p_func):
 
-    def p_func_if_pmap(obj, axis_name):
+    def p_func_if_pmap(obj, axis_name, **kwargs):
         try:
             jax.core.axis_frame(axis_name)
-            return p_func(obj, axis_name)
+            return p_func(obj, axis_name, **kwargs)
         except NameError:
             return obj
 

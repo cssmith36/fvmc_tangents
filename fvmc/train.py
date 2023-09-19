@@ -22,7 +22,8 @@ from .utils import (PAXIS, Array, ArrayTree, Printer, PyTree, adaptive_split,
                     backup_if_exist, cfg_to_yaml, load_pickle,
                     multi_process_name, save_checkpoint)
 from .wavefunction import (FixNuclei, NucleiGaussianSlater, ProductModel,
-                           build_jastrow_slater, log_prob_from_model)
+                           build_jastrow_slater, log_prob_from_model,
+                           log_psi_from_model)
 
 
 class SysInfo(NamedTuple):
@@ -137,6 +138,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
                                          cell=cell, **ansatz_cfg)
             ansatz = FixNuclei(raw_ansatz, nuclei)
     log_prob_fn = log_prob_from_model(ansatz)
+    log_psi_fn = log_psi_from_model(ansatz)
 
     # make estimators
     local_fn = (build_eval_local_full(ansatz, elems, cell) if fully_quantum
@@ -174,7 +176,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
         value_func_has_state=False,
         multi_device=multi_device,
         pmap_axis_name=PAXIS.name,
-        log_prob_func=log_prob_fn,
+        log_psi_func=log_psi_fn,
         grad_clipping=optimize_cfg.get("grad_clipping", None),
         **optimize_cfg.get(optimize_cfg.optimizer, {}))
 
@@ -276,7 +278,7 @@ def run(step_fn, train_state, iterations, log_cfg):
         if not jax.tree_util.tree_all(
           jax.tree_map(lambda a: jnp.all(~jnp.isnan(a)), train_state.params)):
             raise ValueError(f"NaN found in params at step {ii} "
-                             f"(log step {opt_info['step']-1})")
+                             f"(log step {int(opt_info['step'].mean())-1})")
         if jnp.any(opt_info["aux"]["nans"] > 0):
             LOGGER.warning("%d NaN(s) found in local energy at step %d (log step %d)",
                            opt_info["aux"]["nans"].sum(),
@@ -286,7 +288,9 @@ def run(step_fn, train_state, iterations, log_cfg):
         if ((ii % log_cfg.stat_every == 0 or ii == iterations-1)
           and jax.process_index() == 0): # only print for process 0 (all same)
             acc_rate = PAXIS.all_mean(mc_info["is_accepted"])
-            stat_dict = {"step": opt_info["step"]-1, **opt_info["aux"],
+            ostep = opt_info["step"]
+            istep = ostep - 1 if jnp.max(ostep) >= 0 else ii
+            stat_dict = {"step": istep, **opt_info["aux"],
                          "acc": acc_rate, "lr":opt_info["learning_rate"]}
             stat_dict = jax.tree_map( # collect from potential pmap
                 lambda x: x[0] if jnp.ndim(x) > 0 else x, stat_dict)

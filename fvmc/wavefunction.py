@@ -1,4 +1,5 @@
 import abc
+import functools
 from dataclasses import field as _field
 from typing import Any, Callable, NamedTuple, Sequence, Tuple
 
@@ -6,20 +7,28 @@ import jax
 from flax import linen as nn
 from jax import numpy as jnp
 
-#from fvmc.utils import Array
-
 from .utils import (Array, _t_real, build_mlp, cdist, displace_matrix,
                     fix_init, parse_spin, pdist)
 
 
-def log_prob_from_model(model: nn.Module):
+def model_wrapper(model: nn.Module,
+                  wrap_out: Callable[[Array, Array], Any]):
+    # switch between different model type
     if isinstance(model, FullWfn): # combine r, x into a tuple conf = (r, x)
-        return lambda p, conf: 2 * model.apply(p, *conf)[1]
+        return lambda p, conf: wrap_out(*model.apply(p, *conf))
     elif isinstance(model, ElecWfn): # electron only case
-        return lambda p, x: 2 * model.apply(p, x)[1]
+        return lambda p, x: wrap_out(*model.apply(p, x))
     else: # fall back for any model
         # raise TypeError(f"unsupoorted model type {type(model)}")
-        return lambda p, *args, **kwargs: 2 * model.apply(p, *args, **kwargs)[1]
+        return lambda p, *a, **kw: wrap_out(*model.apply(p, *a, **kw))
+
+def _wrap_sign(sign, logp):
+    if jnp.iscomplexobj(sign):
+        logp += jnp.log(sign)
+    return logp
+
+log_prob_from_model = functools.partial(model_wrapper, wrap_out=lambda s, l: 2*l)
+log_psi_from_model = functools.partial(model_wrapper, wrap_out=_wrap_sign)
 
 
 class FullWfn(nn.Module, abc.ABC):

@@ -1,41 +1,33 @@
 # many test functions are borrowed from vmcnet
 
-import pytest
 import jax
-import optax
 import numpy as np
+import optax
+import pytest
 from jax import numpy as jnp
 from jax.flatten_util import ravel_pytree
 
-from fvmc.preconditioner import scale_by_fisher_inverse, scale_by_fisher_inverse_direct
+from fvmc.preconditioner import scale_by_fisher_inverse
 
 
-def _setup_fisher(centered=True):
+def _setup_fisher(shifting=1., complex=False):
     energy_grad = jnp.array([0.5, -0.5, 1.2])
     params = jnp.array([1.0, 2.0, 3.0])
-    positions = jnp.array(
-        [
-            [1.0, -0.1, 0.1],
-            [-0.1, 1.0, 0.0],
-            [0.1, 0.0, 1.0],
-            [0.01, -0.01, 0.0],
-            [0.0, 0.0, -0.02],
-        ]
-    )
+    _key0 = jax.random.PRNGKey(0)
+    positions = jax.random.normal(_key0, (5, 3))
+    if complex:
+        positions += 1j * jax.random.normal(_key0+1, (5, 3))
     n_sample = len(positions)
 
     jacobian = positions
-    if centered:
-        centered_jacobian = jacobian - jnp.mean(jacobian, axis=0)
-        centered_JT_J = jnp.matmul(jnp.transpose(centered_jacobian), centered_jacobian)
-        fisher = centered_JT_J / n_sample  # technically 0.25 * Fisher
-    else:
-        fisher = jacobian.T @ jacobian / n_sample
+    centering = 1. - jnp.sqrt(1. - shifting)
+    jacobian = jacobian - centering * jnp.mean(jacobian, axis=0)
+    fisher = (jacobian.T.conj() @ jacobian).real / n_sample
 
-    def log_prob_fn(params, positions):
-        return 2*jnp.matmul(positions, params)
+    def log_psi_fn(params, positions):
+        return jnp.matmul(positions, params)
 
-    return energy_grad, params, positions, fisher, log_prob_fn
+    return energy_grad, params, positions, fisher, log_psi_fn
 
 
 @pytest.mark.parametrize("weighted", [True, False])
@@ -47,46 +39,55 @@ def test_fisher_inverse_cg(damping, mixing, weighted):
         params,
         positions,
         fisher,
-        log_prob_fn
+        log_psi_fn
     ) = _setup_fisher()
 
     fisher_precond = scale_by_fisher_inverse(
-        log_prob_fn,
+        log_psi_fn,
+        mode="lazy_cg",
         damping=damping,
-        mixing_factor=mixing,
+        x0_mixing=mixing,
+        max_norm=1e10,
         use_weighted=weighted)
     state = fisher_precond.init(params)
     if mixing > 0:
-        state = state._replace(last_grads_flat=energy_grad, mixing_factor=mixing)
+        state = state._replace(solver_state=(energy_grad, mixing))
 
-    data = (positions, log_prob_fn(params, positions)) if weighted else positions
+    data = (positions, 2*log_psi_fn(params, positions)) if weighted else positions
     finv_grad, new_state = fisher_precond.update(energy_grad, state, params, data)
 
     np.testing.assert_allclose(
-        ravel_pytree(finv_grad)[0], new_state[0], rtol=1e-12, atol=0.)
+        ravel_pytree(finv_grad)[0], new_state[1][0], rtol=1e-12, atol=0.)
 
     np.testing.assert_allclose(
         (fisher + damping*jnp.eye(3)) @ finv_grad, energy_grad, atol=1e-6)
 
 
-@pytest.mark.parametrize("centered", [True, False])
-@pytest.mark.parametrize("direct", [True, False])
 @pytest.mark.parametrize("weighted", [True, False])
-def test_fisher_with_optax(centered, direct, weighted):
+@pytest.mark.parametrize("complex", [True, False])
+@pytest.mark.parametrize("shifting", [1, 0.1])
+@pytest.mark.parametrize("mode", ["cg", "direct", "qr", "svd"])
+def test_fisher_with_optax(shifting, complex, mode, weighted):
     (
         energy_grad,
         params,
         positions,
         fisher,
-        log_prob_fn
-    ) = _setup_fisher(centered)
+        log_psi_fn
+    ) = _setup_fisher(shifting, complex)
 
+    damping = 1e-3
+    fisher = fisher + damping*jnp.eye(3)
+
+    kwargs = {"precondition": True} if mode == "cg" else {}
     precond = scale_by_fisher_inverse(
-        log_prob_fn,
-        damping=0,
-        centered=centered,
+        log_psi_fn,
+        mode=mode,
+        damping=damping,
+        shifting=shifting,
+        max_norm=1e10,
         use_weighted=weighted,
-        direct_inverse=direct)
+        **kwargs)
 
     opt = optax.chain(
         precond,

@@ -45,11 +45,12 @@ KFAC_DEFAULTS = dict(
 )
 
 SR_DEFAULTS = dict(
+    mode="qr",
     damping=1e-3,
+    shifting=None,
+    max_norm=3e-2,
     descender=None,
-    momentum=0.0,
-    maxiter=100,
-    mixing_factor=0.9,
+    momentum=None,
     use_weighted=False,
 )
 
@@ -174,7 +175,7 @@ class OptaxWrapper:
             stats["step"] = new_state.count
             stats["learning_rate"] = new_state.hyperparams["learning_rate"]
         else:
-            stats["step"] = stats["learning_rate"] = jnp.nan
+            stats["step"] = stats["learning_rate"] = -1
         batch_size = jax.tree_util.tree_leaves(batch)[0].shape[0]
         stats["batch_size"] = batch_size * jax.device_count()
         stats["data_seen"] = stats["batch_size"] * stats["step"]
@@ -227,7 +228,7 @@ def build_optimizer(
         value_func_has_rng=False,
         multi_device=False,
         pmap_axis_name=PMAP_AXIS_NAME,
-        log_prob_func=None,
+        log_psi_func=None,
         grad_clipping=None,
         **kwargs
 ):
@@ -272,12 +273,19 @@ def build_optimizer(
         clip_transform = (optax.adaptive_grad_clip(grad_clipping)
                           if grad_clipping else optax.identity())
         if using_sr:
-            assert log_prob_func is not None
+            assert log_psi_func is not None
             options = {**SR_DEFAULTS, **kwargs}
-            dname = options.pop("descender", None)
-            momentum = options.pop("momentum", 0.0)
+            dname = options.pop("descender")
+            momentum = options.pop("momentum")
+            shifting = options.pop("shifting")
+            max_norm = options.pop("max_norm")
+            if shifting is None:
+                shifting = lambda t: 1. - lr_schedule(t) / lr_schedule(0)
+            norm_schedule = lambda t: max_norm / lr_schedule(t)
             precond = scale_by_fisher_inverse(
-                log_prob_fn=log_prob_func,
+                log_psi_fn=log_psi_func,
+                shifting=shifting,
+                max_norm=norm_schedule,
                 pmap_axis_name=pmap_axis_name,
                 **options)
             descender = (getattr(optax_alias, dname) if dname
