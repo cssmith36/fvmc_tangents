@@ -1,15 +1,15 @@
 import dataclasses
 from typing import Optional, Tuple, Sequence
 
-import flax.linen as nn
 import jax
-import jax.numpy as jnp
 import numpy as onp
+from flax import linen as nn
+from jax import numpy as jnp
 
-from .utils import (Array, _t_real, adaptive_residual, build_mlp,
+from ..utils import (Array, _t_real, adaptive_residual, build_mlp,
                     collect_elems, displace_matrix, fix_init, log_linear_exp,
                     parse_activation, wrap_complex_linear)
-from .wavefunction import FullWfn
+from .base import FullWfn
 from .neuralnet import FermiLayer, ElectronCusp
 
 
@@ -267,31 +267,3 @@ class FermiNetPbc(FullWfn):
         # logpsi += cusp(d_ee=dmat[n_nucl:, n_nucl:, -1])
 
         return sign, logpsi
-
-
-class NucleiGaussianSlaterPbc(FullWfn):
-    r"""Gaussian for nuclei wavefunctions with Slater determinant exchange
-
-    The wavefunction is given by Det_ij{ exp[-(r_i - r0_j)^2 / (2 * sigma_j^2)] }
-    """
-
-    cell: Array
-    init_r0: Array
-    init_sigma: Array
-
-    @nn.compact
-    def __call__(self, r: Array, x: Array) -> Tuple[Array, Array]:
-        del x
-        # r0: [n_nucl, 3], sigma: [n_nucl, 1]
-        r0 = self.param("r0", fix_init, self.init_r0, _t_real)
-        sigma = self.param("sigma", fix_init,
-                           jnp.reshape(self.init_sigma, (-1, 1)), _t_real)
-        # pbc displacement as L/\pi * sin(\pi/L * d)
-        latvec = self.cell
-        invvec = jnp.linalg.inv(latvec)
-        disp = displace_matrix(r, r0)
-        d_frac = disp @ invvec
-        d_hsin = jnp.sin(jnp.pi * d_frac) @ latvec/jnp.pi
-        # exps: [n_nucl, n_nucl]
-        exps = jnp.exp(-0.5 * jnp.sum((d_hsin / sigma)**2, -1))
-        return jnp.linalg.slogdet(exps)

@@ -13,17 +13,16 @@ from tensorboardX import SummaryWriter
 from . import LOGGER
 from .estimator import (build_eval_local_elec, build_eval_local_full,
                         build_eval_total)
-from .neuralnet import FermiNet
-from .neuralnet_pbc import FermiNetPbc, NucleiGaussianSlaterPbc
 from .optimizer import build_lr_schedule, build_optimizer
 from .sampler import (build_conf_init_fn, build_sampler, make_batched,
                       make_multistep)
 from .utils import (PAXIS, Array, ArrayTree, Printer, PyTree, adaptive_split,
                     backup_if_exist, cfg_to_yaml, load_pickle,
                     multi_process_name, save_checkpoint)
-from .wavefunction import (FixNuclei, NucleiGaussianSlater, ProductModel,
-                           build_jastrow_slater, log_prob_from_model,
-                           log_psi_from_model)
+from .wavefunction import (FermiNet, FermiNetPbc, FixNuclei,
+                           NucleiGaussianSlater, NucleiGaussianSlaterPbc,
+                           ProductModel, build_jastrow_slater,
+                           log_prob_from_model, log_psi_from_model)
 
 
 class SysInfo(NamedTuple):

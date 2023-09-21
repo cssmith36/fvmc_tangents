@@ -18,8 +18,6 @@ __all__ = [
     "optimizer",
     "preconditioner",
     "wavefunction",
-    "neuralnet",
-    "neuralnet_pbc",
     "config",
     "train",
 ]

@@ -6,9 +6,10 @@ import pytest
 from jax import numpy as jnp
 
 from fvmc.utils import pdist
-from fvmc.wavefunction import (NucleiGaussian, NucleiGaussianSlater,
-                               SimpleJastrow, SimpleOrbital, SimpleSlater,
-                               build_jastrow_slater, FixNuclei)
+from fvmc.wavefunction.base import FixNuclei
+from fvmc.wavefunction.naive import (NucleiGaussian, NucleiGaussianSlater,
+                                     SimpleJastrow, SimpleOrbital,
+                                     SimpleSlater, build_jastrow_slater)
 
 
 def make_collapse_conf():

@@ -1,105 +1,13 @@
-import abc
-import functools
 from dataclasses import field as _field
-from typing import Any, Callable, NamedTuple, Sequence, Tuple
+from typing import Tuple
 
 import jax
 from flax import linen as nn
 from jax import numpy as jnp
 
-from .utils import (Array, _t_real, build_mlp, cdist, displace_matrix,
-                    fix_init, parse_spin, pdist)
-
-
-def model_wrapper(model: nn.Module,
-                  wrap_out: Callable[[Array, Array], Any]):
-    # switch between different model type
-    if isinstance(model, FullWfn): # combine r, x into a tuple conf = (r, x)
-        return lambda p, conf: wrap_out(*model.apply(p, *conf))
-    elif isinstance(model, ElecWfn): # electron only case
-        return lambda p, x: wrap_out(*model.apply(p, x))
-    else: # fall back for any model
-        # raise TypeError(f"unsupoorted model type {type(model)}")
-        return lambda p, *a, **kw: wrap_out(*model.apply(p, *a, **kw))
-
-def _wrap_sign(sign, logp):
-    if jnp.iscomplexobj(sign):
-        logp += jnp.log(sign)
-    return logp
-
-log_prob_from_model = functools.partial(model_wrapper, wrap_out=lambda s, l: 2*l)
-log_psi_from_model = functools.partial(model_wrapper, wrap_out=_wrap_sign)
-
-
-class FullWfn(nn.Module, abc.ABC):
-    @abc.abstractmethod
-    def __call__(self, r: Array, x: Array) -> Tuple[Array, Array]:
-        """Take nuclei position r and electron position x, return sign and log|psi|"""
-        raise NotImplementedError
-
-
-class ElecWfn(nn.Module, abc.ABC):
-    @abc.abstractmethod
-    def __call__(self, x: Array) -> Tuple[Array, Array]:
-        """Take only the electron position x, return sign and log|psi|"""
-        raise NotImplementedError
-
-
-class FakeModel(NamedTuple):
-    fn: Callable
-    init_params: Any
-
-    def init(self, *args, **kwargs):
-        return self.init_params
-
-    def apply(self, params, *args):
-        return self.fn(params, *args)
-
-
-class FixNuclei(ElecWfn):
-    r"""Module warpper that fix the nuclei positions for a full model
-
-    This class takes a full wavefunction model f(r,x) of r (nuclei) and x (electrons)
-    and the fixed nuclei positions r_0, and return a new model which only depends on x.
-    Think it as a partial warpper that works on nn.Module
-    """
-    model: FullWfn
-    nuclei: Array
-
-    def __call__(self, x: Array) -> Tuple[Array, Array]:
-        return self.model(r=self.nuclei, x=x)
-
-
-class ProductModel(FullWfn):
-    r"""Pruduct of multiple model results.
-
-    Assuming the models returns in log scale.
-    The signature of each submodel can either be pure: x -> log(f(x))
-    or with sign: x -> sign(f(x)), log(|f(x)|).
-    The model will return sign if any of its submodels returns sign.
-    """
-
-    submodels: Sequence[nn.Module]
-
-    @nn.compact
-    def __call__(self, r:Array, x: Array) -> Tuple[Array, Array]:
-        sign = 1.
-        logf = 0.
-        with_sign = True # False will make the sign optional
-
-        for model in self.submodels:
-            result = model(r, x)
-            if isinstance(result, tuple):
-                sign *= result[0]
-                logf += result[1]
-                with_sign = True
-            else:
-                logf += result
-
-        if with_sign:
-            return sign, logf
-        else:
-            return logf
+from ..utils import (Array, _t_real, build_mlp, cdist, displace_matrix,
+                    fix_init, pdist)
+from .base import FullWfn, ProductModel
 
 
 # follow the TwoBodyExpDecay class in vmcnet
@@ -201,6 +109,19 @@ class SimpleSlater(FullWfn):
             return sign_up * sign_dn, ldet_up + ldet_dn
 
 
+def build_jastrow_slater(elems, spins, nuclei, dynamic_nuclei=False,
+        full_det=True, orbital_type="simple", orbital_args=None):
+    orbital_args = orbital_args or {}
+    jastrow = SimpleJastrow(elems)
+    slater = SimpleSlater(spins, full_det, orbital_type, orbital_args)
+    mlist = [jastrow, slater]
+    if dynamic_nuclei:
+        mlist.append(NucleiGaussianSlater(nuclei, 0.1))
+    model = ProductModel(mlist)
+    # elec_model = FixNuclei(model, nuclei)
+    return model
+
+
 class NucleiGaussian(FullWfn):
     r"""Gaussian for nuclei wavefunctions, centered on trainable sites
 
@@ -240,14 +161,29 @@ class NucleiGaussianSlater(FullWfn):
         return jnp.linalg.slogdet(exps)
 
 
-def build_jastrow_slater(elems, spins, nuclei, dynamic_nuclei=False,
-        full_det=True, orbital_type="simple", orbital_args=None):
-    orbital_args = orbital_args or {}
-    jastrow = SimpleJastrow(elems)
-    slater = SimpleSlater(spins, full_det, orbital_type, orbital_args)
-    mlist = [jastrow, slater]
-    if dynamic_nuclei:
-        mlist.append(NucleiGaussianSlater(nuclei, 0.1))
-    model = ProductModel(mlist)
-    # elec_model = FixNuclei(model, nuclei)
-    return model
+class NucleiGaussianSlaterPbc(FullWfn):
+    r"""Gaussian for nuclei wavefunctions with Slater determinant exchange
+
+    The wavefunction is given by Det_ij{ exp[-(r_i - r0_j)^2 / (2 * sigma_j^2)] }
+    """
+
+    cell: Array
+    init_r0: Array
+    init_sigma: Array
+
+    @nn.compact
+    def __call__(self, r: Array, x: Array) -> Tuple[Array, Array]:
+        del x
+        # r0: [n_nucl, 3], sigma: [n_nucl, 1]
+        r0 = self.param("r0", fix_init, self.init_r0, _t_real)
+        sigma = self.param("sigma", fix_init,
+                           jnp.reshape(self.init_sigma, (-1, 1)), _t_real)
+        # pbc displacement as L/\pi * sin(\pi/L * d)
+        latvec = self.cell
+        invvec = jnp.linalg.inv(latvec)
+        disp = displace_matrix(r, r0)
+        d_frac = disp @ invvec
+        d_hsin = jnp.sin(jnp.pi * d_frac) @ latvec/jnp.pi
+        # exps: [n_nucl, n_nucl]
+        exps = jnp.exp(-0.5 * jnp.sum((d_hsin / sigma)**2, -1))
+        return jnp.linalg.slogdet(exps)

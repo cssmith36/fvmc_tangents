@@ -2,15 +2,15 @@ import dataclasses
 from typing import Sequence, Tuple, Callable
 from functools import partial
 
-import flax.linen as nn
 import jax
-import jax.numpy as jnp
 import numpy as onp
+from flax import linen as nn
+from jax import numpy as jnp
 
-from .utils import (Array, _t_real, adaptive_residual, build_mlp,
+from ..utils import (Array, _t_real, adaptive_residual, build_mlp,
                     collect_elems, displace_matrix, fix_init, log_linear_exp,
                     parse_activation)
-from .wavefunction import FullWfn
+from .base import FullWfn
 
 # for all functions, we use the following convention:
 # r for atom positions

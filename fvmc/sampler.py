@@ -11,7 +11,7 @@ from jax.flatten_util import ravel_pytree
 from .utils import (PMAP_AXIS_NAME, Array, ArrayTree, PmapAxis, PyTree,
                     adaptive_split, clip_gradient, parse_spin, ravel_shape,
                     tree_map, tree_where)
-from .wavefunction import nn
+
 
 KeyArray = Array
 Params = ArrayTree
