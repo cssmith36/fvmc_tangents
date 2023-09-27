@@ -113,17 +113,20 @@ class EwaldSum:
 
 
 def gen_pbc_disp_fn(latvec):
-    # will always assume orthogonal latvec
+    # hard-code convergence parameters
+    ortho_tol = 1e-10
+    n_lat = 1
+
     latvec = jnp.asarray(latvec)
     invvec = jnp.linalg.inv(latvec)
+    latdiag = jnp.diagonal(latvec)
 
-    ortho_tol = 1e-10
-    is_diagonal = jnp.all(
-        jnp.abs(latvec - jnp.diag(jnp.diagonal(latvec))) < ortho_tol)
+    # check if latvec is orthogonal
+    is_diagonal = jnp.all(jnp.abs(latvec - jnp.diag(latdiag)) < ortho_tol)
+    is_orthogonal = jnp.all(jnp.abs(jnp.triu(latvec @ latvec.T, k=1)) < ortho_tol)
 
     def diagonal_disp(xa, xb):
         disp = xa - xb
-        latdiag = jnp.diagonal(latvec)
         shifted_disp = (disp + latdiag/2) % latdiag - latdiag/2
         return shifted_disp
 
@@ -133,7 +136,22 @@ def gen_pbc_disp_fn(latvec):
         shifted_frac_disp = (frac_disp + 0.5) % 1 - 0.5
         return shifted_frac_disp @ latvec
 
-    return diagonal_disp if is_diagonal else orthogonal_disp
+    images = gen_lattice_displacements(latvec, n_lat)
+
+    def xpbc(x):  # wrap position into simulation cell
+        f = x @ invvec
+        return (f % 1) @ latvec
+
+    def monoclinic_disp(xa, xb):
+        disps = (xpbc(xa) - xpbc(xb))[None] + images
+        dists = jnp.linalg.norm(disps, axis=-1)
+        idx = jnp.argmin(dists)
+        return disps[idx]
+
+    disp_fn = diagonal_disp
+    if not is_diagonal:
+        disp_fn = orthogonal_disp if is_orthogonal else monoclinic_disp
+    return disp_fn
 
 
 def gen_lattice_displacements(latvec, n_lat):
