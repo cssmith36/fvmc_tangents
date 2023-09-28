@@ -112,46 +112,55 @@ class EwaldSum:
         return self.energy(charge, pos)
 
 
-def gen_pbc_disp_fn(latvec):
-    # hard-code convergence parameters
-    ortho_tol = 1e-10
-    n_lat = 1
-
-    latvec = jnp.asarray(latvec)
-    invvec = jnp.linalg.inv(latvec)
-    latdiag = jnp.diagonal(latvec)
-
-    # check if latvec is orthogonal
-    is_diagonal = jnp.all(jnp.abs(latvec - jnp.diag(latdiag)) < ortho_tol)
+def determine_cell_type(latvec, ortho_tol=1e-10) -> str:
+    is_diagonal = jnp.all(jnp.abs(latvec - jnp.diag(jnp.diag(latvec))) < ortho_tol)
+    if is_diagonal:
+        return "diagonal"
     is_orthogonal = jnp.all(jnp.abs(jnp.triu(latvec @ latvec.T, k=1)) < ortho_tol)
+    if is_orthogonal:
+        return "orthogonal"
+    return "general"
 
-    def diagonal_disp(xa, xb):
-        disp = xa - xb
-        shifted_disp = (disp + latdiag/2) % latdiag - latdiag/2
-        return shifted_disp
 
-    def orthogonal_disp(xa, xb):
-        disp = xa - xb
-        frac_disp = disp @ invvec
-        shifted_frac_disp = (frac_disp + 0.5) % 1 - 0.5
-        return shifted_frac_disp @ latvec
-
-    images = gen_lattice_displacements(latvec, n_lat)
-
-    def xpbc(x):  # wrap position into simulation cell
-        f = x @ invvec
-        return (f % 1) @ latvec
-
-    def monoclinic_disp(xa, xb):
-        disps = (xpbc(xa) - xpbc(xb))[None] + images
-        dists = jnp.linalg.norm(disps, axis=-1)
-        idx = jnp.argmin(dists)
-        return disps[idx]
-
-    disp_fn = diagonal_disp
-    if not is_diagonal:
-        disp_fn = orthogonal_disp if is_orthogonal else monoclinic_disp
-    return disp_fn
+def gen_pbc_disp_fn(latvec, mode="auto"):
+    latvec = jnp.asarray(latvec)
+    mode = mode.lower()
+    if mode == "auto":
+        ortho_tol = 1e-10
+        mode = determine_cell_type(latvec, ortho_tol=ortho_tol)
+    # diagonal cell
+    if mode.startswith("diag"):
+        latdiag = jnp.diagonal(latvec)
+        def diagonal_disp(xa, xb):
+            disp = xa - xb
+            shifted_disp = (disp + latdiag/2) % latdiag - latdiag/2
+            return shifted_disp
+        return diagonal_disp
+    # orthogonal cell
+    if mode.startswith("orth"):
+        invvec = jnp.linalg.inv(latvec)
+        def orthogonal_disp(xa, xb):
+            disp = xa - xb
+            frac_disp = disp @ invvec
+            shifted_frac_disp = (frac_disp + 0.5) % 1 - 0.5
+            return shifted_frac_disp @ latvec
+        return orthogonal_disp
+    # general cell
+    if mode.startswith("gen"):
+        n_lat = 1
+        images = gen_lattice_displacements(latvec, n_lat)
+        invvec = jnp.linalg.inv(latvec)
+        def xpbc(x):  # wrap position into simulation cell
+            f = x @ invvec
+            return (f % 1) @ latvec
+        def monoclinic_disp(xa, xb):
+            disps = (xpbc(xa) - xpbc(xb))[None] + images
+            dists = jnp.linalg.norm(disps, axis=-1)
+            idx = jnp.argmin(dists)
+            return disps[idx]
+        return monoclinic_disp
+    # fail to recognize mode
+    raise ValueError(f"unknown mode for gen_pbc_disp_fn: {mode}")
 
 
 def gen_lattice_displacements(latvec, n_lat):

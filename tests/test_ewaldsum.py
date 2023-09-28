@@ -6,6 +6,8 @@ import numpy as np
 from jax import numpy as jnp
 
 from fvmc.ewaldsum import EwaldSum
+from fvmc.ewaldsum import determine_cell_type, gen_pbc_disp_fn
+from fvmc.utils import displace_matrix
 
 
 _key0 = jax.random.PRNGKey(0)
@@ -89,3 +91,43 @@ def test_ewaldsum_calc_pe():
     r, x = jnp.split(pos, [4], axis=0)
     ewald = EwaldSum(latvec)
     np.testing.assert_allclose(ewald.calc_pe(elems, r, x), answer, rtol=1e-5)
+
+
+# below are tests for pbc distance
+
+_cell_dict = dict(
+        diagonal = jnp.eye(3),
+        orthogonal = jnp.eye(3, k=1) + jnp.eye(3, k=-2),
+        general = jnp.ones((3,3)) - jnp.eye(3)
+)
+
+
+@pytest.mark.parametrize("mode", ["diagonal", "orthogonal", "general"])
+def test_determine_cell_type(mode):
+    cell = _cell_dict[mode]
+    assert determine_cell_type(cell) == mode
+
+
+@pytest.mark.parametrize("cell_type", ["diagonal", "orthogonal", "general"])
+def test_pbc_displacement(cell_type):
+    npoints = 100
+    keya, keyb = jax.random.split(_key0)
+    xa = jax.random.uniform(keya, (npoints, 3))
+    xb = jax.random.uniform(keyb, (npoints, 3))
+    cell = _cell_dict[cell_type]
+    cell_types = list(_cell_dict.keys())
+    self_idx = cell_types.index(cell_type)
+
+    auto_disp_fn = gen_pbc_disp_fn(cell, mode='auto')
+    ref_dmat = displace_matrix(xa, xb, auto_disp_fn)
+    neg_transpose_dmat = displace_matrix(xb, xa, auto_disp_fn)
+    np.testing.assert_allclose(-neg_transpose_dmat.transpose((1,0,2)), ref_dmat)
+
+    for idx, mode in enumerate(cell_types):
+        disp_fn = gen_pbc_disp_fn(cell, mode)
+        dmat = displace_matrix(xa, xb, disp_fn=disp_fn)
+        if idx < self_idx: # simple method, should not work
+            with np.testing.assert_raises(AssertionError):
+                np.testing.assert_allclose(dmat, ref_dmat, atol=0.01)
+        else: # general method, should work
+            np.testing.assert_allclose(dmat, ref_dmat, atol=1e-10)
