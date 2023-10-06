@@ -1,6 +1,7 @@
 import abc
 import functools
-from typing import Any, Callable, NamedTuple, Sequence, Tuple
+import dataclasses
+from typing import Any, Callable, Sequence, Tuple
 
 import jax
 from flax import linen as nn
@@ -43,7 +44,8 @@ class ElecWfn(nn.Module, abc.ABC):
         raise NotImplementedError
 
 
-class FakeModel(NamedTuple):
+@dataclasses.dataclass
+class FakeModel:
     fn: Callable
     init_params: Any
 

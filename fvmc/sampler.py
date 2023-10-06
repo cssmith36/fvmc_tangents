@@ -10,7 +10,7 @@ from jax.flatten_util import ravel_pytree
 
 from .utils import (PMAP_AXIS_NAME, Array, ArrayTree, PmapAxis, PyTree,
                     adaptive_split, clip_gradient, parse_spin, ravel_shape,
-                    tree_map, tree_where)
+                    tree_where)
 
 
 KeyArray = Array
@@ -107,7 +107,7 @@ def make_batched(sampler: MCSampler, n_batch: int, concat: bool = False,
         vkey = jax.random.split(key, n_batch)
         new_state, *res = vaxis.vmap(sample_fn, (0, None, 0))(vkey, params, state)
         if concat:
-            res = tree_map(jnp.concatenate, res)
+            res = jax.tree_map(jnp.concatenate, res)
         return new_state, *res
     def init(key, params):
         vkey = jax.random.split(key, n_batch)
@@ -130,7 +130,7 @@ def make_multistep_fn(sample_fn, n_step, concat=False):
         keys = jax.random.split(key, n_step)
         new_state, res = lax.scan(inner, state, keys)
         if concat:
-            res = tree_map(jnp.concatenate, res)
+            res = jax.tree_map(jnp.concatenate, res)
         return new_state, *res
     return multi_sample
 
