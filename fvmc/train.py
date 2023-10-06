@@ -8,7 +8,6 @@ import numpy as onp
 from flax import linen as nn
 from jax import numpy as jnp
 from ml_collections import ConfigDict
-from tensorboardX import SummaryWriter
 
 from . import LOGGER
 from .estimator import (build_eval_local_elec, build_eval_local_full,
@@ -243,9 +242,21 @@ def run(step_fn, train_state, iterations, log_cfg):
 
     log_cfg = ConfigDict(log_cfg)
 
+    use_tensorboard = log_cfg.get("use_tensorboard", False)
+    if use_tensorboard:
+        try:
+            from tensorboardX import SummaryWriter
+        except ImportError:
+            LOGGER.warning("no tensorboardx, set use_tensorboard = False")
+            use_tensorboard = False
+
     # tensorboard writer
     if jax.process_index() == 0:
-        writer = SummaryWriter(log_cfg.stat_path)
+        backup_if_exist(log_cfg.stat_path, prefix="bck",
+                        max_keep=log_cfg.get("stat_keep"))
+        writer = open(log_cfg.stat_path, "w", buffering=1)
+        if use_tensorboard:
+            tracker = SummaryWriter(log_cfg.tracker_path)
     # training log printer
     print_fields = {"step": "",
                     "e_tot": ".4f", "std_e": ".3e",
@@ -256,7 +267,8 @@ def run(step_fn, train_state, iterations, log_cfg):
     if log_cfg.dump_every > 0 and log_cfg.dump_path:
         from npy_append_array import NpyAppendArray
         dump_path = multi_process_name(log_cfg.dump_path)
-        backup_if_exist(dump_path, prefix="bck")
+        backup_if_exist(dump_path, prefix="bck",
+                        max_keep=log_cfg.get("dump_keep"))
         assert not os.path.exists(dump_path)
         dumper = NpyAppendArray(dump_path, delete_if_exists=True)
 
@@ -291,11 +303,14 @@ def run(step_fn, train_state, iterations, log_cfg):
             istep = ostep - 1 if jnp.max(ostep) >= 0 else ii
             stat_dict = {"step": istep, **opt_info["aux"],
                          "acc": acc_rate, "lr":opt_info["learning_rate"]}
-            stat_dict = jax.tree_map( # collect from potential pmap
-                lambda x: x[0] if jnp.ndim(x) > 0 else x, stat_dict)
+            stat_dict = {k: v[0] if jnp.ndim(v) > 0 else v # collect from potential pmap
+                         for k, v in stat_dict.items()}
             printer.print_fields(stat_dict)
-            for k,v in stat_dict.items():
-                writer.add_scalar(k, v, ii)
+            onp.savetxt(writer, onp.array(list(stat_dict.values())).reshape(1,-1),
+                        header=" ".join(stat_dict.keys()) if ii == 0 else "")
+            if use_tensorboard:
+                for k,v in stat_dict.items():
+                    tracker.add_scalar(k, v, istep)
 
         # dump traj
         if dumper is not None and ii % log_cfg.dump_every == 0:
@@ -308,10 +323,12 @@ def run(step_fn, train_state, iterations, log_cfg):
             save_checkpoint(
                 ckpt_path,
                 tuple(trim_training_state(train_state)),
-                max_keep=log_cfg.ckpt_keep)
+                max_keep=log_cfg.get("ckpt_keep"))
 
     if jax.process_index() == 0:
         writer.close()
+        if use_tensorboard:
+            tracker.close()
     if dumper is not None:
         dumper.close()
 

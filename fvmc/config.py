@@ -54,14 +54,18 @@ def default() -> ConfigDict:
         },
 
         "log": {
-            "stat_path": "tbdata/",
+            "stat_path": "data.txt",
             "stat_every": 100,
+            "stat_keep": 2, # only back up once, avoid clutter
             "ckpt_path": "checkpoint.pkl",
             "ckpt_every": 100,
-            "ckpt_keep": 1,
-            "dump_every": 0,
+            "ckpt_keep": 2, # keep current and last check point
             "dump_path": "trajdump.npy",
+            "dump_every": 0, # change to positive number to dump
+            "dump_keep": 2, # only back up once, avoid clutter
             "hpar_path": "hparams.yaml",
+            "use_tensorboard": True,
+            "tracker_path": "tbdata/",
         },
 
     }, type_safe=False)
