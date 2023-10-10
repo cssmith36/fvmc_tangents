@@ -154,7 +154,7 @@ def make_chained(*samplers):
 def build_gaussian(logdens_fn, shape_or_init, mu=0., sigma=1., truncate=None):
     sample_shape = _extract_sample_shape(shape_or_init)
     xsize, unravel = ravel_shape(sample_shape)
-    info = {"is_accepted": True}
+    info = {"is_accepted": True, "recip_ratio": 1.}
 
     def sample(key, params, state):
         if truncate is not None:
@@ -186,13 +186,14 @@ def build_metropolis(logdens_fn, shape_or_init, sigma=0.1, steps=10):
         x2 = x1 + sigma * jax.random.normal(gkey, shape=x1.shape)
         ld2 = ravel_logd(params, x2)
         ratio = ld2 - ld1
-        return mh_select(ukey, ratio, state, (x2, ld2))
+        return (*mh_select(ukey, ratio, state, (x2, ld2)), ratio)
 
     def sample(key, params, state):
         multi_step = make_multistep_fn(step, steps, concat=False)
-        new_state, accepted = multi_step(key, params, state)
+        new_state, accepted, log_ratio = multi_step(key, params, state)
         new_sample, new_logdens = new_state
-        info = {"is_accepted": accepted.mean()}
+        info = {"is_accepted": accepted.mean(),
+                "recip_ratio": _recip_ratio(log_ratio).mean()}
         return new_state, (unravel(new_sample), new_logdens), info
 
     def refresh(state, params):
@@ -224,13 +225,14 @@ def build_langevin(logdens_fn, shape_or_init, tau=0.1, steps=10, grad_clipping=N
         ld2, g2 = logd_and_grad(params, x2)
         g2 = g2.conj() # handle complex grads, no influence for real case
         ratio = ld2 + log_q(x1, x2, g2) - ld1 - log_q(x2, x1, g1)
-        return mh_select(ukey, ratio, state, (x2, g2, ld2))
+        return (*mh_select(ukey, ratio, state, (x2, g2, ld2)), ratio)
 
     def sample(key, params, state):
         multi_step = make_multistep_fn(step, steps, concat=False)
-        new_state, accepted = multi_step(key, params, state)
+        new_state, accepted, log_ratio = multi_step(key, params, state)
         new_sample, new_grads, new_logdens = new_state
-        info = {"is_accepted": accepted.mean()}
+        info = {"is_accepted": accepted.mean(),
+                "recip_ratio": _recip_ratio(log_ratio).mean()}
         return new_state, (unravel(new_sample), new_logdens), info
 
     def refresh(state, params):
@@ -279,9 +281,10 @@ def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1.,
         q2s, p2, f2s, v2 = leapfrog(q1s, p1, -g1s, -ld1)
         # scale back the coordinates for output
         q2, g2, ld2 = q2s / scale, -f2s * scale, -v2
-        ratio = (logd_gaussian(-p2).sum(-1)+ld2) - (logd_gaussian(p1).sum(-1)+ld1)
-        (qn, gn, ldn), accepted = mh_select(ukey, ratio, state[:3], (q2, g2, ld2))
-        info = {"is_accepted": accepted}
+        log_ratio = (logd_gaussian(-p2).sum(-1)+ld2) - (logd_gaussian(p1).sum(-1)+ld1)
+        (qn, gn, ldn), accepted = mh_select(ukey, log_ratio, state[:3], (q2, g2, ld2))
+        info = {"is_accepted": accepted,
+                "recip_ratio": _recip_ratio(log_ratio).mean()}
         return (qn, gn, ldn, *extras), (unravel(qn), ldn), info
 
     def refresh(state, params):
@@ -317,8 +320,9 @@ def build_blackjax(logdens_fn, shape_or_init, kernel="nuts", grad_clipping=None,
             inverse_mass_matrix=inv_mass, **kwargs)
         state = state[1]
         state, info = kernel.step(key, state)
+        info_dict = {**info._asdict(), "recip_ratio": 1./info.acceptance_rate}
         return ((state.position, state),
-                (unravel(state.position), -state.potential_energy), info._asdict())
+                (unravel(state.position), state.logdensity), info_dict)
 
     def refresh(state, params):
         sample = state[0]
@@ -370,6 +374,10 @@ def gen_leapfrog(potential_fn, dt, steps, with_carry=True):
         return leapfrog_carry(q, p, g, v)[:2]
 
     return leapfrog_carry if with_carry else leapfrog_nocarry
+
+
+def _recip_ratio(log_ratio):
+    return jnp.exp(-jnp.minimum(0, log_ratio))
 
 
 def _gclip(x, bnd):

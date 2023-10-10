@@ -1,3 +1,5 @@
+import operator as _op
+
 import jax
 import numpy as np
 import pytest
@@ -29,7 +31,7 @@ def make_test_sampler(name):
     return make_multistep(make_batched(sampler, _nchain, concat=False), _nstep, concat=False)
 
 
-def shared_sampler_test(sampler, jit=True):
+def shared_sampler_test(sampler, jit=True, check_info=True):
     params = None
     key1, key2, key3 = jax.random.split(_key0, 3)
 
@@ -46,6 +48,10 @@ def shared_sampler_test(sampler, jit=True):
     np.testing.assert_allclose(logprob, _logprob_fn(None, sample), atol=1e-5)
     np.testing.assert_allclose(sample.mean(), _mean, rtol=0.05)
     np.testing.assert_allclose(sample.std(), _std, rtol=0.05)
+
+    if check_info:
+        np.testing.assert_array_compare(_op.le, info["is_accepted"], 1)
+        np.testing.assert_array_compare(_op.ge, info["recip_ratio"], 1)
 
 
 @pytest.mark.parametrize("with_r", [True, False])
@@ -95,7 +101,7 @@ def test_sampler_chained():
     mcmc = make_test_sampler("mcmc")
     mala = make_test_sampler("mala")
     sampler = make_chained(mcmc, mala)
-    shared_sampler_test(sampler, jit=True)
+    shared_sampler_test(sampler, jit=True, check_info=False)
 
 
 @pytest.mark.slow

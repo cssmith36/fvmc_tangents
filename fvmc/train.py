@@ -260,7 +260,7 @@ def run(step_fn, train_state, iterations, log_cfg):
     # training log printer
     print_fields = {"step": "",
                     "e_tot": ".4f", "std_e": ".3e",
-                    "acc": ".2f", "lr": ".2e"}
+                    "acc": ".2f", "hacc": ".2f", "lr": ".2e"}
     printer = Printer(print_fields, time_format=".2f")
     # sample trajectory dumper
     dumper = None
@@ -299,10 +299,12 @@ def run(step_fn, train_state, iterations, log_cfg):
         if ((ii % log_cfg.stat_every == 0 or ii == iterations-1)
           and jax.process_index() == 0): # only print for process 0 (all same)
             acc_rate = PAXIS.all_mean(mc_info["is_accepted"])
+            hacc_rate = 1. / PAXIS.all_mean(mc_info["recip_ratio"])
             ostep = opt_info["step"]
             istep = ostep - 1 if jnp.max(ostep) >= 0 else ii
             stat_dict = {"step": istep, **opt_info["aux"],
-                         "acc": acc_rate, "lr":opt_info["learning_rate"]}
+                         "acc": acc_rate, "hacc": hacc_rate,
+                         "lr":opt_info["learning_rate"]}
             stat_dict = {k: v[0] if jnp.ndim(v) > 0 else v # collect from potential pmap
                          for k, v in stat_dict.items()}
             printer.print_fields(stat_dict)
