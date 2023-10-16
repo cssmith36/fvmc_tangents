@@ -39,6 +39,8 @@ def default() -> ConfigDict:
         },
 
         "loss": {
+            "ke_kwargs": {},
+            "mini_batch": None,
             "energy_clipping": 5.,
             "center_shifting": True,
             "clip_from_median": True,

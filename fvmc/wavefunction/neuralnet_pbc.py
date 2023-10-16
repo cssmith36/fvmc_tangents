@@ -174,7 +174,7 @@ class GeminalMap(nn.Module):
             sorb_dn = jnp.concatenate(
                 [sorb_dn, jnp.ones((n_sdiff, h1_size))], axis=0)
         # make geminals
-        w = self.param("w", nn.initializers.normal(0.01), (h1_size, n_det))
+        w = self.param("w", nn.initializers.normal(1), (h1_size, n_det)) + 1
         # make it kfac recognizable
         # pair_orbs = jnp.einsum('lk,il,jl->kij', w, sorb_up, sorb_dn.conj())
         pair_orbs = ((sorb_up[:,None,:] * sorb_dn.conj()) @ w).transpose(2,0,1)

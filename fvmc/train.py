@@ -139,8 +139,12 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
     log_psi_fn = log_psi_from_model(ansatz)
 
     # make estimators
-    local_fn = (build_eval_local_full(ansatz, elems, cell) if fully_quantum
-                else build_eval_local_elec(ansatz, elems, nuclei, cell))
+    loss_cfg = dict(loss_cfg) # so that we can pop
+    ke_kwargs = loss_cfg.pop("ke_kwargs", {})
+    lclargs = dict(stop_gradient=True, ke_kwargs=ke_kwargs)
+    local_fn = (build_eval_local_full(ansatz, elems, cell, **lclargs)
+                if fully_quantum else
+                build_eval_local_elec(ansatz, elems, nuclei, cell, **lclargs))
     loss_fn = build_eval_total(local_fn,
         pmap_axis_name=PAXIS.name, **loss_cfg)
     loss_and_grad = jax.value_and_grad(loss_fn, has_aux=True)

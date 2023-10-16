@@ -32,35 +32,88 @@ def calc_pe(elems, r, x):
     return el_el + el_ion + ion_ion
 
 
-def calc_ke_elec(log_psi, x):
-    # adapted from FermiNet and vmcnet
-    # calc -0.5 * (\nable^2 \psi) / \psi
-    # handle batch of x automatically
+def laplacian_over_f(log_f, scale=None, forward_mode=False, partition_size=1):
+    # (\nable^2 f) / f = \nabla^2 log|f| + (\nabla log|f|)^2
+    if forward_mode:
+        import fwdlap
+    scale = ravel_pytree(scale)[0] if scale is not None else jnp.array([1.0])
 
-    def _lapl_over_psi(x):
-        # (\nable^2 f) / f = \nabla^2 log|f| + (\nabla log|f|)^2
-        # x is assumed to have shape [n_ele, 3], not batched
-        x_shape = x.shape
-        flat_x = x.reshape(-1)
-        ncoord = flat_x.size
-
-        f = lambda flat_x: log_psi(flat_x.reshape(x_shape)) # take flattened x
+    # normal bwd-fwd hessian version
+    def _lapl_backward(*args):
+        flat_in, unravel = ravel_pytree(args)
+        ncoord = flat_in.size
+        seye = jnp.eye(ncoord) * jnp.diag(scale)
+        f = lambda flat_in: log_f(*unravel(flat_in)) # take flattened x
         grad_f = adaptive_grad(f)
-        grad_value, dgrad_f = jax.linearize(grad_f, flat_x)
-
-        eye = jnp.eye(ncoord)
-        loop_fn = lambda i, val: val + dgrad_f(eye[i])[i]
-        laplacian = (grad_value**2).sum() + lax.fori_loop(0, ncoord, loop_fn, 0.0)
+        grad_value, dgrad_f = jax.linearize(grad_f, flat_in)
+        laplacian = (scale * grad_value**2).sum()
+        # different partition size need different implementation
+        if partition_size is None:
+            hess = jax.vmap(dgrad_f)(seye)
+            laplacian += hess.trace()
+        elif partition_size == 1:
+            loop_fn = lambda i, val: val + dgrad_f(seye[i])[i]
+            laplacian += lax.fori_loop(0, ncoord, loop_fn, 0.0)
+        else:
+            seye = seye.reshape(-1, partition_size, ncoord)
+            hess = lax.map(jax.vmap(dgrad_f), seye)
+            laplacian += hess.reshape(ncoord, ncoord).trace()
         return laplacian
 
-    if x.ndim == 2:
-        lapl_fn = _lapl_over_psi
-    elif x.ndim == 3:
-        lapl_fn = jax.vmap(_lapl_over_psi)
-    else:
-        raise ValueError(f"only support x with ndim equals 2 or 3, get {x.ndim}")
+    # fwd laplacian version
+    def _lapl_forward(*args):
+        flat_in, unravel = ravel_pytree(args)
+        ncoord = flat_in.size
+        seye = jnp.eye(ncoord) * jnp.diag(jnp.sqrt(scale))
+        zero = fwdlap.Zero.from_value(flat_in)
+        f = lambda flat_in: log_f(*unravel(flat_in)) # take flattened x
+        if partition_size is None:
+            primals, grads, laps = fwdlap.lap(f, (flat_in,), (seye,), (zero,))
+            laplacian = (grads**2).sum() + laps
+        else:
+            seye = seye.reshape(-1, partition_size, ncoord)
+            primals, f_lap_pe = fwdlap.lap_partial(f, (flat_in,), (seye[0],), (zero,))
+            def loop_fn(i, val):
+                (jac, lap) = f_lap_pe((seye[i],), (zero,))
+                return val + (jac**2).sum() + lap
+            laplacian = lax.fori_loop(0, ncoord//partition_size, loop_fn, 0.0)
+        return laplacian
 
+    return _lapl_forward if forward_mode else _lapl_backward
+
+
+def calc_ke_elec(log_psi, x, *, forward_mode=False, partition_size=1):
+    # calc -0.5 * (\nable^2 \psi) / \psi
+    # handle batch of x automatically
+    lapl_fn = laplacian_over_f(
+        log_psi,
+        scale=None,
+        forward_mode=forward_mode,
+        partition_size=partition_size)
+    if x.ndim == 3:
+        lapl_fn = jax.vmap(lapl_fn)
+    elif x.ndim != 2:
+        raise ValueError(f"only support x with ndim equals 2 or 3, get {x.ndim}")
     return -0.5 * lapl_fn(x)
+
+
+def calc_ke_full(log_psi, mass, r, x, *, forward_mode=False, partition_size=1):
+    # calc -0.5 * (\nable^2 \psi) / \psi
+    # handle batch of r, x automatically
+    mass = jnp.reshape(mass, -1)
+    minv = (jnp.repeat(1/mass, r.shape[-1]), jnp.ones(x.shape[-1] * x.shape[-2]))
+    lapl_fn = laplacian_over_f(
+        log_psi,
+        scale=minv,
+        forward_mode=forward_mode,
+        partition_size=partition_size)
+    assert r.ndim == x.ndim, \
+        f"proton and electron should have same ndim, got {r.ndim} and {x.ndim}"
+    if x.ndim == 3:
+        lapl_fn = jax.vmap(lapl_fn)
+    elif x.ndim != 2:
+        raise ValueError(f"only support input with ndim equals 2 or 3, get {x.ndim}")
+    return -0.5 * lapl_fn(r, x)
 
 
 def get_nuclei_mass(elems):
@@ -68,41 +121,6 @@ def get_nuclei_mass(elems):
     # neutrons are treated as 1
     mass = PROTON_MASS * jnp.asarray(ISOTOPE_MAIN)[elems.astype(int)]
     return mass
-
-
-def calc_ke_full(log_psi, mass, r, x):
-    # adapted from FermiNet and vmcnet
-    # calc -0.5 * (\nable^2 \psi) / \psi
-    # handle batch of r, x automatically
-    mass = jnp.reshape(mass, -1)
-
-    def _lapl_over_psi(r, x):
-        # (\nable^2 f) / f = \nabla^2 log|f| + (\nabla log|f|)^2
-        # r and x is assumed to have shape [n_ion/elec, 3], not batched
-        flat_in, unravel = ravel_pytree((r, x))
-        ncoord = flat_in.size
-        assert mass.size == r.shape[0]
-
-        f = lambda flat_in: log_psi(*unravel(flat_in)) # take flattened x
-        grad_f = adaptive_grad(f)
-        grad_value, dgrad_f = jax.linearize(grad_f, flat_in)
-
-        minv = jnp.concatenate([jnp.repeat(1/mass, r.shape[1]),
-                                jnp.ones(x.size)])
-        minv_mat = jnp.diag(minv)
-        loop_fn = lambda i, val: val + dgrad_f(minv_mat[i])[i]
-        laplacian = ((minv * grad_value**2).sum()
-                     + lax.fori_loop(0, ncoord, loop_fn, 0.0))
-        return laplacian
-
-    if r.ndim == x.ndim == 2:
-        lapl_fn = _lapl_over_psi
-    elif r.ndim == x.ndim == 3:
-        lapl_fn = jax.vmap(_lapl_over_psi)
-    else:
-        raise ValueError(f"unsupported r.ndim: {r.ndim} and x.ndim: {x.ndim}")
-
-    return -0.5 * lapl_fn(r, x)
 
 
 def calc_local_energy(log_psi, elems, r, x, cell=None, nuclei_ke=False):

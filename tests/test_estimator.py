@@ -70,9 +70,10 @@ def test_eval_local_full_shape(pbc):
     assert beloc.shape == bsign.shape == blogf.shape == (3,)
 
 
+@pytest.mark.parametrize("mini_batch", [None, 1])
 @pytest.mark.parametrize("weighted", [True, False])
 @pytest.mark.parametrize("clipping", [None, 0.75])
-def test_eval_total(clipping, weighted):
+def test_eval_total(clipping, weighted, mini_batch):
     log_psi = lambda a, x: (jnp.sign(x.mean(-1)-2), a * jnp.sum(jnp.square(x), axis=(-1)))
     model = make_dummy_model(log_psi)
 
@@ -104,7 +105,8 @@ def test_eval_total(clipping, weighted):
     )
 
     eval_total = build_eval_total(eval_local, clipping,
-                    center_shifting=False, use_weighted=weighted)
+                    center_shifting=False, mini_batch=mini_batch,
+                    use_weighted=weighted)
     eval_total_grad = jax.value_and_grad(eval_total, has_aux=True)
 
     # loss, aux = eval_total(a, (x, log_sample))

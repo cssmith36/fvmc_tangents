@@ -11,7 +11,7 @@ from .utils import PMAP_AXIS_NAME, PmapAxis, ith_output, exp_shifted
 
 
 def clip_around(a, target, half_range, stop_gradient=True):
-    if jnp.iscomplexobj(a):
+    if jnp.iscomplexobj(target):
         return (clip_around(a.real, target.real, half_range, stop_gradient)
                 + 1j * clip_around(a.imag, target.imag, half_range, stop_gradient))
     c_min = target - half_range
@@ -31,7 +31,8 @@ def get_log_psi(model_apply, params):
     return log_psi
 
 
-def build_eval_local_elec(model, elems, nuclei, cell=None):
+def build_eval_local_elec(model, elems, nuclei, cell=None, *,
+                          stop_gradient=True, ke_kwargs=None):
     """create a function that evaluates local energy, sign and log abs of wavefunction.
 
     Args:
@@ -47,19 +48,23 @@ def build_eval_local_elec(model, elems, nuclei, cell=None):
     """
 
     calc_pe_adapt = EwaldSum(cell).calc_pe if cell is not None else calc_pe
+    ke_kwargs = ke_kwargs or {}
 
     def eval_local(params, x):
         sign, logf = model.apply(params, x)
         log_psi_fn = get_log_psi(model.apply, params)
-        ke = calc_ke_elec(log_psi_fn, x)
+        ke = calc_ke_elec(log_psi_fn, x, **ke_kwargs)
         pe = calc_pe_adapt(elems, nuclei, x)
         eloc = ke + pe
+        if stop_gradient:
+            eloc = lax.stop_gradient(eloc)
         return eloc, sign, logf
 
     return eval_local
 
 
-def build_eval_local_full(model, elems, cell=None):
+def build_eval_local_full(model, elems, cell=None, *,
+                          stop_gradient=True, ke_kwargs=None):
     """create a function that evaluates local energy, sign and log abs of full wavefunction.
 
     Args:
@@ -76,22 +81,49 @@ def build_eval_local_full(model, elems, cell=None):
 
     calc_pe_adapt = EwaldSum(cell).calc_pe if cell is not None else calc_pe
     mass = get_nuclei_mass(elems)
+    ke_kwargs = ke_kwargs or {}
 
     def eval_local(params, conf):
         r, x = conf
         sign, logf = model.apply(params, r, x)
         log_psi_fn = get_log_psi(model.apply, params)
-        ke = calc_ke_full(log_psi_fn, mass, r, x)
+        ke = calc_ke_full(log_psi_fn, mass, r, x, **ke_kwargs)
         pe = calc_pe_adapt(elems, r, x)
         eloc = ke + pe
+        if stop_gradient:
+            eloc = lax.stop_gradient(eloc)
         return eloc, sign, logf
 
     return eval_local
 
 
+def get_batched_local(eval_local_fn, mini_batch=None, unroll_loop=False):
+    if not mini_batch:
+        return jax.vmap(eval_local_fn, in_axes=(None, 0), out_axes=0)
+    def batch_local(params, data):
+        partial_local = jax.vmap(partial(eval_local_fn, params), 0, 0)
+        # partial_local = jax.checkpoint(partial_local, prevent_cse=False)
+        stack_data = jax.tree_map(lambda x: x.reshape(
+            x.shape[0] // mini_batch, mini_batch, *x.shape[1:]), data)
+        if not unroll_loop:
+            stack_res = lax.map(partial_local, stack_data)
+            res = jax.tree_map(lambda x: x.reshape(-1, *x.shape[2:]), stack_res)
+        else: # manually unroll the map to prevent a bug in compiling
+            res_list = []
+            n_iter, = set(jax.tree_util.tree_leaves(
+                jax.tree_map(lambda a:a.shape[0], stack_data)))
+            for ii in range(n_iter):
+                slice_data = jax.tree_map(lambda a, ii=ii: a[ii], stack_data)
+                res_list.append(partial_local(slice_data))
+            res = jax.tree_map(lambda *a: jnp.concatenate(a, axis=0), *res_list)
+        return res
+    return batch_local
+
+
 def build_eval_total(eval_local_fn, energy_clipping=None,
                      clip_from_median=False, center_shifting=False,
-                     pmap_axis_name=PMAP_AXIS_NAME, use_weighted=False):
+                     mini_batch=None, pmap_axis_name=PMAP_AXIS_NAME,
+                     use_weighted=False):
     """Create a function that evaluates quantities on the whole batch of samples.
 
     The created function will take paramters and sampled data as input,
@@ -123,14 +155,15 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
     """
     if use_weighted:
         return build_eval_total_weighted(
-            eval_local_fn,
-            energy_clipping,
-            clip_from_median,
-            center_shifting,
-            pmap_axis_name)
+            eval_local_fn=eval_local_fn,
+            energy_clipping=energy_clipping,
+            clip_from_median=clip_from_median,
+            center_shifting=center_shifting,
+            mini_batch=mini_batch,
+            pmap_axis_name=pmap_axis_name)
 
     paxis = PmapAxis(pmap_axis_name)
-    batch_local = jax.vmap(eval_local_fn, in_axes=(None, 0), out_axes=0)
+    batch_local = get_batched_local(eval_local_fn, mini_batch)
 
     def eval_total(params, data):
         r"""return loss and statistical quantities calculated from samples.
@@ -163,7 +196,7 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
         eclip = eloc
         if energy_clipping and energy_clipping > 0:
             ecenter = (jnp.median(paxis.all_gather(eloc.real))
-                       if clip_from_median else etot)
+                       if clip_from_median else etot.real)
             tv = paxis.all_nanmean(jnp.abs(eloc - etot))
             eclip = clip_around(eloc, ecenter, energy_clipping * tv, stop_gradient=True)
         # shift the constant and get diff
@@ -180,7 +213,7 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
 
 def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
                               clip_from_median=False, center_shifting=True,
-                              pmap_axis_name=PMAP_AXIS_NAME):
+                              mini_batch=None, pmap_axis_name=PMAP_AXIS_NAME):
     """Create a function that evaluates quantities on the whole batch of samples.
 
     The created function will take paramters and sampled data as input,
@@ -210,7 +243,7 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
     """
 
     paxis = PmapAxis(pmap_axis_name)
-    batch_local = jax.vmap(eval_local_fn, in_axes=(None, 0), out_axes=0)
+    batch_local = get_batched_local(eval_local_fn, mini_batch)
 
     def eval_total(params, data):
         r"""return loss and statistical quantities calculated from samples.

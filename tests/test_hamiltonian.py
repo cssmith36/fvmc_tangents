@@ -1,12 +1,14 @@
 # many test functions are borrowed from vmcnet
 
-import jax
-import pytest
-import numpy as np
-from jax import numpy as jnp
 from functools import partial
 
-from fvmc.hamiltonian import calc_pe, calc_ke_elec, calc_ke_full, calc_local_energy
+import jax
+import numpy as np
+import pytest
+from jax import numpy as jnp
+
+from fvmc.hamiltonian import (calc_ke_elec, calc_ke_full, calc_local_energy,
+                              calc_pe, laplacian_over_f)
 
 
 def make_test_log_f():
@@ -61,6 +63,26 @@ def test_potential_energy():
     actual_pe = calc_pe(elems, nuclei, x)
 
     np.testing.assert_allclose(actual_pe, target_pe)
+
+
+@pytest.mark.parametrize("partition_size", [None, 1, 2])
+@pytest.mark.parametrize("forward_mode", [True, False])
+@pytest.mark.parametrize("scale", [1., 0.5])
+def test_laplacian(scale, forward_mode, partition_size):
+    x = make_test_x()
+    f, log_f = make_test_log_f()
+    log_psi = partial(log_f, None)
+
+    # d^2f/dx_i^2 = 2 for all i, so the Laplacian is simply 2 * n, where n is
+    # the number of coordiantes. We then divide by f(x) to get (nabla^2 f) / f
+    target_laplacian = 2 * scale * (x.shape[-1] * x.shape[-2]) / f(None, x)
+    actual_laplacian = laplacian_over_f(
+        log_psi,
+        scale=scale,
+        forward_mode=forward_mode,
+        partition_size=partition_size)(x)
+
+    np.testing.assert_allclose(actual_laplacian, target_laplacian, rtol=1e-6)
 
 
 @pytest.mark.parametrize("x", [make_test_x(), make_batched_x()])
