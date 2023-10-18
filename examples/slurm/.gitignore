@@ -3,3 +3,4 @@ log.out
 hparams.yaml
 **/tbdata/*
 slurm-*.out
+data.txt*

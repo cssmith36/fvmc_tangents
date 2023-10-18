@@ -21,8 +21,10 @@ def clip_around(a, target, half_range, stop_gradient=True):
     return jnp.clip(a, c_min, c_max)
 
 
-def get_log_psi(model_apply, params):
+def get_log_psi(model_apply, params, stop_gradient=False):
     # make log of wavefunction from model.apply
+    if stop_gradient:
+        params = lax.stop_gradient(params)
     def log_psi(*args):
         sign, logd = model_apply(params, *args)
         if jnp.iscomplexobj(sign):
@@ -52,7 +54,8 @@ def build_eval_local_elec(model, elems, nuclei, cell=None, *,
 
     def eval_local(params, x):
         sign, logf = model.apply(params, x)
-        log_psi_fn = get_log_psi(model.apply, params)
+        log_psi_fn = get_log_psi(model.apply, params,
+                                 stop_gradient=stop_gradient)
         ke = calc_ke_elec(log_psi_fn, x, **ke_kwargs)
         pe = calc_pe_adapt(elems, nuclei, x)
         eloc = ke + pe
@@ -86,7 +89,8 @@ def build_eval_local_full(model, elems, cell=None, *,
     def eval_local(params, conf):
         r, x = conf
         sign, logf = model.apply(params, r, x)
-        log_psi_fn = get_log_psi(model.apply, params)
+        log_psi_fn = get_log_psi(model.apply, params,
+                                 stop_gradient=stop_gradient)
         ke = calc_ke_full(log_psi_fn, mass, r, x, **ke_kwargs)
         pe = calc_pe_adapt(elems, r, x)
         eloc = ke + pe

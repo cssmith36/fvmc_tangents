@@ -152,7 +152,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
     # make sampler
     n_sample = sample_cfg.size
     n_chain = sample_cfg.chains or n_sample
-    if n_chain % n_sample != 0:
+    if n_sample % n_chain != 0:
         LOGGER.warning("Sample size not divisible by batch size, rounding up")
     n_multistep = -(-n_sample // n_chain)
     n_batch = n_chain // n_device
@@ -236,7 +236,7 @@ def build_training_step(sampler, optimizer):
         mc_state, data, mc_info = sampler.sample(mckey, params, mc_state)
         params, opt_state, opt_info = optimizer.step(params, opt_state, optkey, batch=data)
         mc_state = sampler.refresh(mc_state, params)
-        return TrainingState(key, params, mc_state, opt_state), (mc_info, opt_info)
+        return TrainingState(key, params, mc_state, opt_state), (mc_info, opt_info), data
 
     return training_step
 
@@ -254,7 +254,7 @@ def run(step_fn, train_state, iterations, log_cfg):
             LOGGER.warning("no tensorboardx, set use_tensorboard = False")
             use_tensorboard = False
 
-    # tensorboard writer
+    # writer and tensorboard tracker
     if jax.process_index() == 0:
         backup_if_exist(log_cfg.stat_path, prefix="bck",
                         max_keep=log_cfg.get("stat_keep"))
@@ -275,6 +275,8 @@ def run(step_fn, train_state, iterations, log_cfg):
                         max_keep=log_cfg.get("dump_keep"))
         assert not os.path.exists(dump_path)
         dumper = NpyAppendArray(dump_path, delete_if_exists=True)
+    # determine chekcpoint path for potential multi device
+    ckpt_path = multi_process_name(log_cfg.ckpt_path)
 
     # mysterious step to prevent kfac memory error
     train_state = jax.tree_map(jnp.copy, train_state)
@@ -287,7 +289,7 @@ def run(step_fn, train_state, iterations, log_cfg):
         printer.reset_timer()
 
         # main training loop
-        train_state, (mc_info, opt_info) = step_fn(train_state)
+        train_state, (mc_info, opt_info), sample_data = step_fn(train_state)
 
         # nan check
         if not jax.tree_util.tree_all(
@@ -316,16 +318,20 @@ def run(step_fn, train_state, iterations, log_cfg):
                         header=" ".join(stat_dict.keys()) if ii == 0 else "")
             if use_tensorboard:
                 for k,v in stat_dict.items():
-                    tracker.add_scalar(k, v, istep)
+                    if k != "step":
+                        tracker.add_scalar(k, v, stat_dict["step"])
 
         # dump traj
         if dumper is not None and ii % log_cfg.dump_every == 0:
-            flat_sample = onp.asarray(train_state.mc_state[0][None, ...])
-            dumper.append(flat_sample) # [n_step, (n_device,) n_batch, n_coord]
+            sconf, slogw = sample_data
+            flat_conf = onp.concatenate([
+                onp.asarray(sc).reshape(slogw.size, -1)
+                for sc in jax.tree_util.tree_leaves(sconf)
+            ], axis=-1)[None]
+            dumper.append(flat_conf) # [n_step, n_batch, n_coord]
 
         # checkpoint
         if ii % log_cfg.ckpt_every == 0 or ii == iterations-1:
-            ckpt_path = multi_process_name(log_cfg.ckpt_path)
             save_checkpoint(
                 ckpt_path,
                 tuple(trim_training_state(train_state)),

@@ -24,6 +24,7 @@ def get_shared_cfg():
     cfg.optimize.lr.base = 1e-4
 
     cfg.log.stat_every = 50
+    cfg.log.dump_every = 50
 
     return cfg
 
@@ -32,8 +33,10 @@ def shared_test(tmp_path, cfg):
     os.chdir(tmp_path)
     train_state = fvmc.train.main(cfg)
 
-    for fname in (cfg.log.stat_path, cfg.log.ckpt_path, cfg.log.hpar_path):
+    for fname in (cfg.log.stat_path, cfg.log.ckpt_path, cfg.log.hpar_path, cfg.log.dump_path):
         assert (tmp_path / fname).exists()
+    if cfg.log.use_tensorboard:
+        assert (tmp_path / cfg.log.tracker_path).exists()
 
     assert jax.tree_util.tree_all(jax.tree_map(lambda a: jnp.all(~jnp.isnan(a)), train_state))
 
