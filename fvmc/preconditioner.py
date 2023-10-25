@@ -5,65 +5,12 @@ import jax
 import optax
 from jax import lax
 from jax import numpy as jnp
+from jax import scipy as jsp
 from jax.flatten_util import ravel_pytree
 from optax import GradientTransformationExtraArgs, ScalarOrSchedule
 
 from .utils import (PMAP_AXIS_NAME, Array, PmapAxis, adaptive_grad, chol_qr,
                     exp_shifted, fast_svd)
-
-
-def fisher_inv_direct(score, vec, damping, state=None, *, paxis=None):
-    # score: n_sample x n_params
-    fisher = (score.T @ score.conj()).real
-    if paxis is not None:
-        fisher = paxis.pmean(fisher)
-    fisher += damping * jnp.eye(fisher.shape[0])
-    return jax.scipy.linalg.solve(fisher, vec), state
-
-
-def fisher_inv_qr(score, vec, damping, state=None, *, paxis=None):
-    # score: n_sample (n) x n_params (m)
-    if jnp.iscomplexobj(score):
-        score = jnp.concatenate([score.real, score.imag], axis=0)
-    # gather all samples together
-    score = paxis.all_gather(score, axis=0, tiled=True)
-    # q: m x n, r: n x n
-    q, r = chol_qr(score.T, shift=damping)
-    # v ~= (S @ S.T + damping * jnp.eye(m))^-1 @ vec
-    v = 1./damping * (vec - q @ (q.T @ vec))
-    return v, state
-
-
-def fisher_inv_svd(score, vec, damping, state=None, *, paxis=None):
-    # score: n_sample (n) x n_params (m)
-    if jnp.iscomplexobj(score):
-        score = jnp.concatenate([score.real, score.imag], axis=0)
-    # gather all samples together
-    score = paxis.all_gather(score, axis=0, tiled=True)
-    # vh: n x m
-    _, s, vh = fast_svd(score)
-    s2inv = 1. / (s**2 + damping)
-    v = (jnp.einsum("ia,a,aj,j->i", vh.T, s2inv, vh, vec)
-         + 1./damping * (vec - vh.T.dot(vh.dot(vec))))
-    return v, state
-
-
-def fisher_inv_iter(score, vec, damping, state, *, paxis=None,
-                    solver='cg', precondition=False,
-                    tol=1e-10, maxiter=100, x0_mixing=0.):
-    # score: n_sample (n) x n_params (m)
-    def fisher_apply(x):
-        fvp = (score.T.conj() @ (score @ x)).real
-        if paxis is not None:
-            fvp = paxis.pmean(fvp)
-        return fvp + damping * x
-    # M is the preconditioning matrix
-    M = None
-    if precondition:
-        fisher_diag = jnp.einsum("np,np->p", score.conj(), score).real
-        M = lambda x: x / (fisher_diag + damping)
-    return _stateful_iter_solve(fisher_apply, vec, state,
-                solver=solver, tol=tol, maxiter=maxiter, x0_mixing=x0_mixing, M=M)
 
 
 def constrain_norm(precond_grads, raw_grads, max_norm):
@@ -80,7 +27,7 @@ class FisherPrecondState(NamedTuple):
 
 def scale_by_fisher_inverse(
         log_psi_fn: Callable,
-        mode: str = "qr",
+        mode: str = "chol",
         damping: ScalarOrSchedule = 1e-3,
         shifting: ScalarOrSchedule = 1.,
         max_norm: ScalarOrSchedule = 3e-2,
@@ -109,8 +56,9 @@ def scale_by_fisher_inverse(
     solver = mode.removeprefix("lazy_")
     eager_fisher_inv = (
         fisher_inv_direct if solver == "direct" else
-        fisher_inv_qr if solver == "qr" else
         fisher_inv_svd if solver == "svd" else
+        fisher_inv_qr if solver == "qr" else
+        fisher_inv_chol if solver == "chol" else
         partial(fisher_inv_iter, solver=solver))
 
     _get_damping = _ensure_schedule(damping)
@@ -148,7 +96,7 @@ def scale_by_fisher_inverse(
             logpsi = jax.vmap(log_psi_fn, in_axes=[None, 0])(params, sample)
             rel_w = exp_shifted(lax.stop_gradient(2 * logpsi.real - logsw),
                                 normalize="mean", pmap_axis_name=paxis.name)[0]
-        rel_w /= n_sample # so we will use sum for local batch (n_sample) dim
+        rel_w /= (n_sample * paxis.size()) # so we will use sum for batch dim
 
         count, solver_state = state
         damping = _get_damping(count)
@@ -156,7 +104,7 @@ def scale_by_fisher_inverse(
         center_factor = 1. - jnp.sqrt(1. - shift_factor)
         max_norm = _get_max_norm(count)
 
-        mean_score = paxis.pmean(jnp.sum(rel_w[:, None] * score, axis=0))
+        mean_score = paxis.psum(jnp.sum(rel_w[:, None] * score, axis=0))
         score = score - center_factor * mean_score
         score = score * jnp.sqrt(rel_w[:, None])
 
@@ -197,15 +145,15 @@ def scale_by_fisher_inverse(
         rel_w = (exp_shifted(lax.stop_gradient(2 * logpsi.real - logsw),
                              normalize="mean", pmap_axis_name=paxis.name)[0]
                  if use_weighted and logsw is not None else 1.)
-        rel_w /= logpsi.shape[0] # so we will use sum for local batch (n_sample) dim
+        rel_w /= (logpsi.shape[0] * paxis.size()) # so we will use sum for batch dim
 
         def fisher_apply(x): # (damped) fisher vector product
             # x has the same shape as grad (raveled)
             jvp = jvp_fn(x.conj()) # shape = (n_sample,) same as logp
-            mean_jvp = paxis.pmean(jnp.sum(jvp * rel_w, axis=0))
+            mean_jvp = paxis.psum(jnp.sum(jvp * rel_w, axis=0))
             jvp = jvp - shift_factor * mean_jvp
             fvp_local, = vjp_fn(jvp.conj() * rel_w)
-            fvp = paxis.pmean(fvp_local.real) # local sum is done by vjp
+            fvp = paxis.psum(fvp_local.real) # local sum is done by vjp
             return fvp + damping * x
 
         precond_grads_flat, new_solver_state = _stateful_iter_solve(
@@ -223,6 +171,144 @@ def scale_by_fisher_inverse(
     update_fn = lazy_update_fn if mode.startswith("lazy_") else eager_update_fn
 
     return GradientTransformationExtraArgs(init_fn, update_fn)
+
+
+def fisher_inv_direct(score, vec, damping, state=None, *, paxis=None):
+    paxis = PmapAxis(paxis) if isinstance(paxis, (str, type(None))) else paxis
+    # score: n_sample x n_params
+    fisher = (score.T @ score.conj()).real
+    fisher = paxis.psum(fisher)
+    fisher += damping * jnp.eye(fisher.shape[0])
+    return jsp.linalg.solve(fisher, vec, assume_a="pos"), state
+
+
+def fisher_inv_svd(score, vec, damping, state=None, *, paxis=None):
+    # score: n_sample (n) x n_params (m)
+    score = _collect_score(score, paxis)
+    # vh: n x m
+    _, s, vh = fast_svd(score)
+    s2inv = 1. / (s**2 + damping)
+    v = (jnp.einsum("ia,a,aj,j->i", vh.T, s2inv, vh, vec)
+         + 1./damping * (vec - vh.T.dot(vh.dot(vec))))
+    return v, state
+
+
+def fisher_inv_qr(score, vec, damping, state=None, *, paxis=None,
+                  all_to_all=True):
+    if all_to_all and paxis is not None and paxis.size() > 1:
+        return fisher_inv_qr_a2a(score, vec, damping, state, paxis=paxis)
+    # score: n_sample (n) x n_params (m)
+    score = _collect_score(score, paxis)
+    # q: m x n, r: n x n
+    q, r = chol_qr(score.T, shift=damping)
+    # v ~= (S @ S.T + damping * jnp.eye(m))^-1 @ vec
+    v = 1./damping * (vec - q @ (q.T @ vec))
+    return v, state
+
+
+def fisher_inv_qr_a2a(score, vec, damping, state=None, *, paxis):
+    assert paxis is not None, "require paxis to perform all_to_all in qr"
+    paxis = PmapAxis(paxis) if isinstance(paxis, str) else paxis
+    # raw score shape: n_sample (n, loc) x n_params (m)
+    nb_loc, np = score.shape # nb is n, np is m
+    # pad and all_to_all score, nd: device count, npad: padding length
+    score, nd, npad = _collect_score_a2a(score, paxis)
+    # q: m (loc) x n, r: n x n
+    q, r = chol_qr(score.swapaxes(-1, -2), shift=damping, psum_axis=paxis.name)
+    # split vec into local parts
+    vec_p = jnp.pad(vec, ((0, npad),), mode="constant")
+    vec_l = vec_p.reshape(nd, -1)[lax.axis_index(paxis.name)]
+    # calc q @ q.T @ vec considering pmap
+    qqtv = q @ paxis.psum(q.T @ vec_l) # shape: m (loc)
+    qqtv = paxis.all_gather(qqtv, axis=0, tiled=True)[:np]
+    # v ~= (S @ S.T + damping * jnp.eye(m))^-1 @ vec
+    v = 1./damping * (vec - qqtv)
+    return v, state
+
+
+def fisher_inv_chol(score, vec, damping, state=None, *, paxis=None,
+                    all_to_all=True):
+    if all_to_all and paxis is not None and paxis.size() > 1:
+        return fisher_inv_chol_a2a(score, vec, damping, state, paxis=paxis)
+    # score: n_sample (n) x n_params (m)
+    score = _collect_score(score, paxis)
+    # w: n x n
+    w = score @ score.T + damping * jnp.eye(score.shape[0], dtype=score.dtype)
+    # basically q @ q.T @ vec in qr version
+    t = score @ vec
+    t = jsp.linalg.solve(w, t, assume_a="pos")
+    t = score.T @ t
+    # v ~= (S @ S.T + damping * jnp.eye(m))^-1 @ vec
+    v = 1./damping * (vec - t)
+    return v, state
+
+
+def fisher_inv_chol_a2a(score, vec, damping, state=None, *, paxis):
+    assert paxis is not None, "require paxis to perform all_to_all in qr"
+    paxis = PmapAxis(paxis) if isinstance(paxis, str) else paxis
+    # raw score shape: n_sample (n, loc) x n_params (m)
+    nb_loc, np = score.shape # nb is n, np is m
+    # pad and all_to_all score, nd: device count, npad: padding length
+    score, nd, npad = _collect_score_a2a(score, paxis)
+    # w: n x n
+    w = paxis.psum(score @ score.T)
+    w += damping * jnp.eye(w.shape[0], dtype=w.dtype)
+    # split vec into local parts
+    vec_p = jnp.pad(vec, ((0, npad),), mode="constant")
+    vec_l = vec_p.reshape(nd, -1)[lax.axis_index(paxis.name)]
+    # calculate S^T @ W^-1 @ S @ vec considering pmap
+    t = paxis.psum(score @ vec_l) # shape: n
+    t = jsp.linalg.solve(w, t, assume_a="pos") # shape: n
+    t = score.T @ t # shape: m (loc)
+    t = paxis.all_gather(t, axis=0, tiled=True)[:np]
+    # v ~= (S @ S.T + damping * jnp.eye(m))^-1 @ vec
+    v = 1./damping * (vec - t)
+    return v, state
+
+
+def fisher_inv_iter(score, vec, damping, state, *, paxis=None,
+                    solver='cg', precondition=False,
+                    tol=1e-10, maxiter=100, x0_mixing=0.):
+    paxis = PmapAxis(paxis) if isinstance(paxis, (str, type(None))) else paxis
+    # score: n_sample (n) x n_params (m)
+    def fisher_apply(x):
+        fvp = (score.T.conj() @ (score @ x)).real
+        fvp = paxis.psum(fvp)
+        return fvp + damping * x
+    # M is the preconditioning matrix
+    M = None
+    if precondition:
+        fisher_diag = (score.conj() * score).real.sum(0)
+        fisher_diag = paxis.psum(fisher_diag)
+        M = lambda x: x / (fisher_diag + damping)
+    return _stateful_iter_solve(fisher_apply, vec, state,
+                solver=solver, tol=tol, maxiter=maxiter, x0_mixing=x0_mixing, M=M)
+
+
+def _collect_score(score, paxis):
+    paxis = PmapAxis(paxis) if isinstance(paxis, (str, type(None))) else paxis
+    # tile real and imag part for complex
+    if jnp.iscomplexobj(score):
+        score = jnp.concatenate([score.real, score.imag], axis=0)
+    # gather all samples together
+    score = paxis.all_gather(score, axis=0, tiled=True)
+    return score
+
+
+def _collect_score_a2a(score, paxis):
+    paxis = PmapAxis(paxis) if isinstance(paxis, (str, type(None))) else paxis
+    # pad score to be devideable by number of devices
+    nd = paxis.size()
+    npad = (nd - score.shape[-1] % nd) % nd
+    score = jnp.pad(score, ((0, 0), (0, npad)), mode="constant")
+    # stack real and imag part because complex all_to_all is buggy
+    if jnp.iscomplexobj(score):
+        score = jnp.stack([score.real, score.imag], axis=0)
+    # all to all transpose, split n_params, concat n_sample
+    ixp, ixb = score.ndim - 1, score.ndim - 2
+    score = lax.all_to_all(score, paxis.name, ixp, ixb, tiled=True)
+    score = score.reshape(-1, score.shape[-1]) # flatten the complex dim
+    return score, nd, npad
 
 
 class _IterSolverState(NamedTuple):

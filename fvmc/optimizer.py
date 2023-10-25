@@ -45,7 +45,7 @@ KFAC_DEFAULTS = dict(
 )
 
 SR_DEFAULTS = dict(
-    mode="qr",
+    mode="chol",
     damping=1e-3,
     shifting=None,
     max_norm=3e-2,

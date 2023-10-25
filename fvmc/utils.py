@@ -80,9 +80,11 @@ def symmetrize(x):
     return (x + _H(x)) / 2
 
 
-def chol_qr(x, shift=None):
+def chol_qr(x, shift=None, psum_axis=None):
     *_, m, n = x.shape
     a = _H(x) @ x
+    if psum_axis is not None:
+        a = lax.psum(a, axis_name=psum_axis)
     if shift is None:
         shift = 1.2e-15 * (m*n + n*(n+1)) * a.trace(0,-1,-2).max()
     r = jsp.linalg.cholesky(a + shift * jnp.eye(n, dtype=x.dtype), lower=False)
@@ -519,6 +521,7 @@ class PmapAxis:
         object.__setattr__(self, "all_nanaverage",
             lambda a, w: self.all_nansum(a * w)
                          / self.all_nansum(~jnp.isnan(a) * w))
+        object.__setattr__(self, "size", lambda: self.psum(1))
 
 PAXIS = PmapAxis(PMAP_AXIS_NAME)
 
