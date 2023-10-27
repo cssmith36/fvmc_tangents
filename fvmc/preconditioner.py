@@ -215,6 +215,9 @@ def fisher_inv_qr_a2a(score, vec, damping, state=None, *, paxis):
     score, nd, npad = _collect_score_a2a(score, paxis)
     # q: m (loc) x n, r: n x n
     q, r = chol_qr(score.swapaxes(-1, -2), shift=damping, psum_axis=paxis.name)
+    # below is the same as the following commented code
+    # q = lax.all_to_all(q, paxis.name, 1, 0, tiled=True)[:np]
+    # qqtv = paxis.psum(q @ (q.T @ vec))
     # split vec into local parts
     vec_p = jnp.pad(vec, ((0, npad),), mode="constant")
     vec_l = vec_p.reshape(nd, -1)[lax.axis_index(paxis.name)]
@@ -249,16 +252,18 @@ def fisher_inv_chol_a2a(score, vec, damping, state=None, *, paxis):
     # raw score shape: n_sample (n, loc) x n_params (m)
     nb_loc, np = score.shape # nb is n, np is m
     # pad and all_to_all score, nd: device count, npad: padding length
-    score, nd, npad = _collect_score_a2a(score, paxis)
-    # w: n x n
-    w = paxis.psum(score @ score.T)
-    w += damping * jnp.eye(w.shape[0], dtype=w.dtype)
-    # split vec into local parts
+    score, nd, npad = _collect_score_a2a(score, paxis) # n x m_loc
+    # split vec into local parts, vec_l: m_loc
     vec_p = jnp.pad(vec, ((0, npad),), mode="constant")
     vec_l = vec_p.reshape(nd, -1)[lax.axis_index(paxis.name)]
+    # concat score.T and vec to do mat mul and psum at once
+    st_n_v = jnp.concatenate([score.T, vec_l[:, None]], axis=1)
+    w_n_sv = paxis.psum(score @ st_n_v) # n x (n + 1)
+    # split w_n_sv into w and sv, w: n x n, sv: n
+    w, sv = w_n_sv[:, :-1], w_n_sv[:, -1]
+    w += damping * jnp.eye(w.shape[0], dtype=w.dtype)
     # calculate S^T @ W^-1 @ S @ vec considering pmap
-    t = paxis.psum(score @ vec_l) # shape: n
-    t = jsp.linalg.solve(w, t, assume_a="pos") # shape: n
+    t = jsp.linalg.solve(w, sv, assume_a="pos") # shape: n
     t = score.T @ t # shape: m (loc)
     t = paxis.all_gather(t, axis=0, tiled=True)[:np]
     # v ~= (S @ S.T + damping * jnp.eye(m))^-1 @ vec
