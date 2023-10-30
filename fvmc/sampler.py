@@ -175,10 +175,12 @@ def build_gaussian(logdens_fn, shape_or_init, mu=0., sigma=1., truncate=None):
     return MCSampler(sample, init, refresh)
 
 
-def build_metropolis(logdens_fn, shape_or_init, sigma=0.1, steps=10):
+def build_metropolis(logdens_fn, shape_or_init, sigma=0.1, steps=10, mass=1.):
     sample_shape = _extract_sample_shape(shape_or_init)
     xsize, unravel = ravel_shape(sample_shape)
     ravel_logd = lambda p, x: logdens_fn(p, unravel(x))
+    mass = _align_vector(mass, sample_shape)
+    sigma = sigma / jnp.sqrt(mass)
 
     def step(key, params, state):
         x1, ld1 = state
@@ -206,17 +208,20 @@ def build_metropolis(logdens_fn, shape_or_init, sigma=0.1, steps=10):
     return MCSampler(sample, init, refresh)
 
 
-def build_langevin(logdens_fn, shape_or_init, tau=0.1, steps=10, grad_clipping=None):
+def build_langevin(logdens_fn, shape_or_init, tau=0.1, steps=10,
+                   mass=1., grad_clipping=None):
     sample_shape = _extract_sample_shape(shape_or_init)
     xsize, unravel = ravel_shape(sample_shape)
     ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
     logd_and_grad = jax.value_and_grad(ravel_logd, 1)
+    mass = _align_vector(mass, sample_shape)
+    tau = tau / mass
 
     # log transition probability q(x2|x1)
     def log_q(x2, x1, g1):
         d = x2 - x1 - tau * g1
-        norm = (d * d.conj()).real.sum(-1)
-        return -1/(4*tau) * norm
+        norm2 = (d * d.conj()).real
+        return (-1/(4*tau) * norm2).sum(-1)
 
     def step(key, params, state):
         x1, g1, ld1 = state
@@ -257,8 +262,12 @@ def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1.,
     xsize, unravel = ravel_shape(sample_shape)
     ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
     logd_and_grad = jax.value_and_grad(ravel_logd, 1)
+    # align mass and rescale
     mass = _align_vector(mass, sample_shape)
     scale = jnp.sqrt(mass)
+    # kinetic energy function
+    ke_fn = lambda p: -logd_gaussian(p).sum(-1)
+    draw_momentum = partial(jax.random.normal, shape=(xsize,))
 
     def _jitter_length(extra_state):
         if not jittered:
@@ -271,17 +280,17 @@ def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1.,
         gkey, ukey = jax.random.split(key)
         q1, g1, ld1, *extras = state
         # scaled coordinates to account for mass
-        q1s, g1s = q1 * scale, g1 / scale
-        p1 = jax.random.normal(gkey, shape=q1.shape)
+        q1s, f1s, v1 = q1 * scale, -g1 / scale, -ld1
+        p1 = draw_momentum(gkey)
         # pot fn take scaled q as input
         potential_fn = lambda xs: -ravel_logd(params, xs / scale)
         # determine integration length
         length, extras = _jitter_length(extras)
         leapfrog = gen_leapfrog(potential_fn, dt, round(length / dt), True)
-        q2s, p2, f2s, v2 = leapfrog(q1s, p1, -g1s, -ld1)
+        q2s, p2, f2s, v2 = leapfrog(q1s, p1, f1s, v1)
+        log_ratio = (-ke_fn(-p2) - v2) - (-ke_fn(p1) - v1)
         # scale back the coordinates for output
         q2, g2, ld2 = q2s / scale, -f2s * scale, -v2
-        log_ratio = (logd_gaussian(-p2).sum(-1)+ld2) - (logd_gaussian(p1).sum(-1)+ld1)
         (qn, gn, ldn), accepted = mh_select(ukey, log_ratio, state[:3], (q2, g2, ld2))
         info = {"is_accepted": accepted,
                 "recip_ratio": _recip_ratio(log_ratio).mean()}

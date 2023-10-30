@@ -11,7 +11,7 @@ from fvmc.sampler import (build_conf_init_fn, choose_sampler_builder,
 _mean = 0.5
 _std = 0.5
 _logprob_fn = lambda p, x: jnp.sum(-0.5*((x - _mean) / _std)**2, -1)
-_xshape = 1
+_xshape = 2
 
 _nchain = 50
 _nstep = 200
@@ -27,7 +27,7 @@ def make_test_sampler(name):
     elif name == "black":
         sampler = maker(_logprob_fn, _xshape, step_size=0.1, kernel="hmc", num_integration_steps=10)
     else:
-        sampler = maker(_logprob_fn, _xshape)
+        sampler = maker(_logprob_fn, _xshape, mass=jnp.ones(_xshape))
     return make_multistep(make_batched(sampler, _nchain, concat=False), _nstep, concat=False)
 
 
