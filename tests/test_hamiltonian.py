@@ -100,8 +100,9 @@ def test_kinetic_energy(x):
     np.testing.assert_allclose(actual_ke, target_ke, rtol=1e-6)
 
 
+@pytest.mark.parametrize("forward_mode", [True, False])
 @pytest.mark.parametrize("x", [make_test_x(), make_batched_x()])
-def test_kinetic_energy_full(x):
+def test_kinetic_energy_full(x, forward_mode):
     # single x
     """Test (nabla^2 f)(x) / f(x) for f(x) = sum_i x_i^2 + 3x_i."""
     f, log_f = make_test_log_f()
@@ -111,14 +112,15 @@ def test_kinetic_energy_full(x):
     # d^2f/dx_i^2 = 2 for all i, so the Laplacian is simply 2 * n, where n is
     # the number of coordiantes. We then divide by f(x) to get (nabla^2 f) / f
     target_ke = -0.5 * (1 + 1/2) * (x.shape[-1] * x.shape[-2]) * 2 / f(None, 2*x)
-    actual_ke = calc_ke_full(log_psi, mass, x, x)
+    actual_ke = calc_ke_full(log_psi, mass, x, x, forward_mode=forward_mode)
 
     np.testing.assert_allclose(actual_ke, target_ke, rtol=1e-6)
 
 
 _raw_p = -jnp.arange(1,4)
+@pytest.mark.parametrize("forward_mode", [True, False])
 @pytest.mark.parametrize("p", [_raw_p, _raw_p*1j, _raw_p*1j + 2])
-def test_kinetic_energy_compelx(p):
+def test_kinetic_energy_compelx(p, forward_mode):
     # psi = exp[p @ x]
     def log_psi_fn(x):
         exp = jnp.exp(x @ p).reshape(1, 1)
@@ -130,7 +132,7 @@ def test_kinetic_energy_compelx(p):
 
     # target ke should be -0.5 * p**2
     target_ke = jnp.sum(-0.5 * p**2)
-    actual_ke = calc_ke_elec(log_psi_fn, xx)
+    actual_ke = calc_ke_elec(log_psi_fn, xx, forward_mode=forward_mode)
 
     np.testing.assert_allclose(actual_ke, target_ke)
 
