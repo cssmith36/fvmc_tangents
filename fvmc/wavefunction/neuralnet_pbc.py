@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Optional, Tuple, Sequence
+from typing import Optional, Sequence, Tuple
 
 import jax
 import numpy as onp
@@ -7,10 +7,10 @@ from flax import linen as nn
 from jax import numpy as jnp
 
 from ..utils import (Array, _t_real, adaptive_residual, build_mlp,
-                    collect_elems, displace_matrix, fix_init, log_linear_exp,
-                    parse_activation, wrap_complex_linear)
+                     collect_elems, displace_matrix, fix_init, gen_kidx,
+                     log_linear_exp, parse_activation, wrap_complex_linear)
 from .base import FullWfn
-from .neuralnet import FermiLayer, ElectronCusp
+from .neuralnet import ElectronCusp, FermiLayer
 
 
 def raw_features_pbc(r, x, latvec, n_freq):
@@ -23,8 +23,9 @@ def raw_features_pbc(r, x, latvec, n_freq):
     h1 = pos[:, :1] * 0
     # h2 for pbc handling
     invvec = jnp.linalg.inv(latvec)
-    disp = displace_matrix(pos, pos)
-    d_frac = disp @ invvec
+    pos_frac = pos @ invvec
+    d_frac = displace_matrix(pos_frac, pos_frac)
+    d_frac = (d_frac + 0.5) % 1. - 0.5
     d_hsin = jnp.sin(jnp.pi * d_frac) @ latvec/jnp.pi
     dist = jnp.linalg.norm(
         d_hsin + jnp.eye(n_p)[..., None],
@@ -40,22 +41,6 @@ def raw_features_pbc(r, x, latvec, n_freq):
         d_freq, dist
     ], axis=-1)
     return h1, h2, dist
-
-
-def gen_kidx(n_d, n_k, close_shell=True):
-    # n_d is spacial dimension
-    # n_k is number of k points
-    n_max = int(onp.ceil((n_k/2) ** (1/n_d)))
-    grid = onp.arange(-n_max, n_max+1, dtype=int)
-    mesh = onp.stack(onp.meshgrid(*([grid] * n_d), indexing='ij'), axis=-1)
-    kall = mesh.reshape(-1, n_d)
-    k2 = (kall ** 2).sum(-1)
-    sidx = onp.argsort(k2)
-    if not close_shell:
-        return kall[sidx[:n_k]]
-    else:
-        shell_idx = onp.nonzero(k2 <= k2[sidx[n_k-1]])
-        return kall[shell_idx]
 
 
 class PbcEnvelope(nn.Module):
