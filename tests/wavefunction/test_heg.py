@@ -25,7 +25,7 @@ def _check_pbc(key, model, params, cell):
     x_shift = x + shift @ cell
     out1 = model.apply(params, x)
     out2 = model.apply(params, x_shift)
-    chex.assert_tree_all_close(out2, out1)
+    chex.assert_trees_all_close(out2, out1)
 
 
 def _check_perm(key, model, params, cell, anti_symm=True):
