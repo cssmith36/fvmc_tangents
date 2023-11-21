@@ -162,6 +162,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
         log_prob_fn,
         conf_init_fn,
         name=sample_cfg.sampler,
+        adaptive=sample_cfg.get("adaptive", None),
         **sample_cfg.get(sample_cfg.sampler, {}))
     sampler = make_multistep(raw_sampler, n_step=n_multistep, concat=False)
     sampler = make_batched(sampler, n_batch=n_batch, concat=True)

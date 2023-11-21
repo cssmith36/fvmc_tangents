@@ -5,8 +5,9 @@ import numpy as np
 import pytest
 from jax import numpy as jnp
 
-from fvmc.sampler import (build_conf_init_fn, choose_sampler_builder,
-                          make_batched, make_chained, make_multistep)
+from fvmc.sampler import (build_conf_init_fn, choose_adaptive_builder,
+                          choose_sampler_builder, make_batched, make_chained,
+                          make_multistep)
 
 _mean = 0.5
 _std = 0.5
@@ -20,8 +21,9 @@ _nburn = 100
 _key0 = jax.random.PRNGKey(0)
 
 
-def make_test_sampler(name):
-    maker = choose_sampler_builder(name)
+def make_test_sampler(name, adaptive=False):
+    maker = (choose_sampler_builder(name) if not adaptive else
+             choose_adaptive_builder(name, harmonic=True, interval=100))
     if name == "gaussian":
         sampler = maker(_logprob_fn, _xshape, mu=_mean, sigma=_std)
     elif name == "black":
@@ -41,7 +43,7 @@ def shared_sampler_test(sampler, jit=True, check_info=True):
     state = sampler.init(key1, params)
     state = sampler.burn_in(key2, params, state, _nburn)
     state, (sample, logprob), info = sampler.sample(key3, params, state)
-    state = sampler.refresh(sample, params)
+    state = sampler.refresh(state, params)
 
     assert sample.shape == (_nstep, _nchain, _xshape)
     assert logprob.shape == (_nstep, _nchain)
@@ -85,7 +87,14 @@ def test_sampler_gaussian():
 @pytest.mark.slow
 @pytest.mark.parametrize("name", ["mcmc", "mala", "hmc", "black"])
 def test_sampler_distribution(name):
-    sampler = make_test_sampler(name)
+    sampler = make_test_sampler(name, adaptive=False)
+    shared_sampler_test(sampler, jit=True)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("name", ["mcmc", "mala", "hmc"])
+def test_sampler_adaptive(name):
+    sampler = make_test_sampler(name, adaptive=True)
     shared_sampler_test(sampler, jit=True)
 
 

@@ -182,7 +182,7 @@ def gen_kidx(n_d, n_k, close_shell=True):
 
 
 def build_moving_avg(decay=0.99, early_growth=True):
-    def moving_avg(acc, new, i):
+    def moving_avg(acc, new, i=None):
         if early_growth:
             iteration_decay = jnp.minimum(decay, (1.0 + i) / (10.0 + i))
         else:
@@ -195,8 +195,9 @@ def build_moving_avg(decay=0.99, early_growth=True):
 
 def ravel_shape(target_shape):
     from jax.flatten_util import ravel_pytree
-    tmp = jax.tree_map(jnp.zeros, target_shape)
-    flat, unravel_fn = ravel_pytree(tmp)
+    with jax.ensure_compile_time_eval():
+        tmp = jax.tree_map(jnp.zeros, target_shape)
+        flat, unravel_fn = ravel_pytree(tmp)
     return flat.size, unravel_fn
 
 
@@ -218,16 +219,13 @@ def fix_init(key, value, dtype=None, random=0., rnd_additive=False):
 
 
 def estimate_activation_gain(actv_fn):
-    key = jax.random.PRNGKey(0)
-    _trial_x = (jax.random.normal(key, (1024, 256)))
-    y = actv_fn(_trial_x)
-    gamma = y.var(axis=-1).mean() ** -0.5
+    with jax.ensure_compile_time_eval():
+        key = jax.random.PRNGKey(0)
+        _trial_x = (jax.random.normal(key, (1024, 256)))
+        y = actv_fn(_trial_x)
+        gamma = y.var(axis=-1).mean() ** -0.5
     return gamma
 
-
-_activation_gain_dict = {(actv_fn := getattr(nn, name)):
-                            estimate_activation_gain(actv_fn)
-                         for name in ("silu", "tanh", "gelu")}
 
 def parse_activation(name, rescale=False, **kwargs):
     if callable(name):
@@ -235,7 +233,7 @@ def parse_activation(name, rescale=False, **kwargs):
     else:
         actv_fn = getattr(nn, name)
     if rescale:
-        gain = _activation_gain_dict[actv_fn] if rescale is True else rescale
+        gain = estimate_activation_gain(actv_fn) if rescale is True else rescale
         return lambda *x: actv_fn(*x, **kwargs) * gain
     else:
         return partial(actv_fn, **kwargs)

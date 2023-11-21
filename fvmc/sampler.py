@@ -1,17 +1,17 @@
 import dataclasses
 from functools import partial
-from typing import Callable, Dict, NamedTuple, Tuple, Union
+from typing import Callable, Dict, NamedTuple, Tuple, Union, Optional
 
 import jax
 import numpy as onp
 from jax import lax
 from jax import numpy as jnp
 from jax.flatten_util import ravel_pytree
+from optax import bias_correction, update_moment
 
 from .utils import (PMAP_AXIS_NAME, Array, ArrayTree, PmapAxis, PyTree,
-                    adaptive_split, clip_gradient, parse_spin, ravel_shape,
-                    tree_where)
-
+                    adaptive_split, build_moving_avg, clip_gradient,
+                    parse_spin, ravel_shape, tree_where)
 
 KeyArray = Array
 Params = ArrayTree
@@ -57,12 +57,45 @@ def choose_sampler_builder(name: str) -> Callable[..., MCSampler]:
     raise NotImplementedError(f"unsupported sampler type: {name}")
 
 
+def choose_adaptive_builder(name: str,
+                            harmonic=False, **kwargs) -> Callable[..., MCSampler]:
+    name = name.lower()
+    if name in ("metropolis", "mcmc", "mh"):
+        keyword = "sigma"
+        default_target = 0.5
+    elif name in ("langevin", "mala"):
+        keyword = "tau"
+        default_target = 0.65
+    elif name in ("hamiltonian", "hybrid", "hmc"):
+        keyword = "dt"
+        default_target = 0.9
+    else:
+        raise NotImplementedError(f"unsupported adaptive sampler type: {name}")
+    target = kwargs.pop("target", default_target)
+    if harmonic:
+        reference = "recip_ratio"
+        increasing = False
+        transform = lambda x: 1./x
+    else:
+        reference = "is_accepted"
+        increasing = False
+    new_kwargs = dict(keyword=keyword, reference=reference, target=target,
+                      increasing=increasing, transform=transform, **kwargs)
+    raw_builder = choose_sampler_builder(name)
+    return make_adaptive(raw_builder, **new_kwargs)
+
+
 def build_sampler(log_prob_fn: Callable[[Params, Sample], Array],
                   shape_or_init: Union[tuple, onp.ndarray, callable],
                   name: str,
+                  adaptive: Union[None, bool, dict] = None,
                   beta: float = 1,
                   **kwargs):
-    builder = choose_sampler_builder(name)
+    if adaptive is not None and adaptive is not False:
+        adaptive = {} if adaptive is True else adaptive
+        builder = choose_adaptive_builder(name, **adaptive)
+    else:
+        builder = choose_sampler_builder(name)
     logdens_fn = lambda p, x: beta * log_prob_fn(p, x)
     return builder(logdens_fn, shape_or_init, **kwargs)
 
@@ -147,6 +180,77 @@ def make_chained(*samplers):
     def refresh(state, params):
         return state
     return MCSampler(sample, init, refresh)
+
+
+def make_adaptive(
+        sampler_factory: Callable[..., MCSampler],
+        keyword: str, # the kwarg name to be tuned upon
+        reference: str, # the info key to be used as reference
+        target: Union[float, Tuple[float, float]], # the targeting interval for the reference
+        transform: Optional[Callable[[float], float]] = None, # transform the reference
+        increasing: bool = False, # if the reference is increasing w.r.t. the kwarg
+        *, # above are required, below are optional user settings
+        interval: int = 100, # the interval to update the kwarg
+        scale_factor: float = 1.01, # the factor to scale the kwarg
+        ema_decay: Optional[float] = None, # the decay of the exponential moving average
+        vmap_axis_name: str = MC_BATCH_AXIS_NAME,
+        pmap_axis_name: str = PMAP_AXIS_NAME,
+) -> Callable[..., MCSampler]:
+
+    # initialize pmap and vmap utilities
+    vaxis = PmapAxis(vmap_axis_name)
+    paxis = PmapAxis(pmap_axis_name)
+
+    # exponential moving average of the reference
+    _decay = 1 - 1. / interval if ema_decay is None else ema_decay
+    moving_avg = build_moving_avg(_decay)
+
+    # dynamic tuning function
+    assert scale_factor > 1., "scale factor must be larger than 1"
+    if not increasing:
+        scale_factor = 1. / scale_factor
+    scale_arr = jnp.array([scale_factor, 1., 1./scale_factor])
+    tmin, tmax = (target, target) if isinstance(target, float) else target
+    def tuning(value, reference):
+        # 0: too small, 1: good, 2: too large
+        idx = (reference > tmin).astype(int) + (reference > tmax).astype(int)
+        return value * scale_arr[idx]
+
+    # transformation of the reference
+    transform = transform or (lambda x: x)
+
+    # return a new sampler factory that takes the same arguments as the original
+    def adaptive_builder(logdens_fn, shape_or_init, **kwargs):
+        raw_sampler = sampler_factory(logdens_fn, shape_or_init, **kwargs)
+        # build new sampler every time
+        def sample(key, params, state):
+            inner_state, count, adapt_value, ema_ref = state
+            ada_kwargs = {**kwargs, keyword: adapt_value}
+            ada_sampler = sampler_factory(logdens_fn, shape_or_init, **ada_kwargs)
+            new_inner_state, data, info = ada_sampler.sample(key, params, inner_state)
+            ref_update = transform(paxis.pmean(vaxis.all_mean(info[reference])))
+            new_ema_ref = moving_avg(ema_ref, ref_update, count)
+            adapt_value = jnp.where((count > 0) & (count % interval == 0),
+                                    tuning(adapt_value, new_ema_ref),
+                                    adapt_value)
+            new_state = (new_inner_state, count+1, adapt_value, new_ema_ref)
+            return new_state, data, info
+        # refresh the inner state
+        def refresh(state, params):
+            inner_state, count, adapt_value, ema_ref = state
+            new_inner_state = raw_sampler.refresh(inner_state, params)
+            return new_inner_state, count, adapt_value, ema_ref
+        # init inner state and wrap it with adapting kwarg
+        def init(key, params):
+            count = 0
+            inner_state = raw_sampler.init(key, params)
+            init_value = kwargs.get(keyword, 0.1) # defaults to 0.1
+            ema_ref = 0.
+            return (inner_state, count, init_value, ema_ref)
+        # assemble the adaptive sampler
+        return MCSampler(sample, init, refresh)
+
+    return adaptive_builder
 
 
 ##### Below are generation functions for different samplers #####
@@ -400,25 +504,27 @@ def _gclip(x, bnd):
 def _extract_sample_shape(shape_or_init):
     # shape_or_init is either a pytree of shapes
     # or a init function that take a key and give an init x
-    if not callable(shape_or_init): # is shape
-        sample_shape = shape_or_init
-    else: # is init function
-        _dummy_key = jax.random.PRNGKey(0)
-        init_sample = shape_or_init(_dummy_key)
-        sample_shape = jax.tree_map(lambda a: onp.array(a.shape), init_sample)
+    with jax.ensure_compile_time_eval():
+        if not callable(shape_or_init): # is shape
+            sample_shape = shape_or_init
+        else: # is init function
+            _dummy_key = jax.random.PRNGKey(0)
+            init_sample = shape_or_init(_dummy_key)
+            sample_shape = jax.tree_map(lambda a: onp.array(a.shape), init_sample)
     return sample_shape
 
 
 def _gen_init_from_refresh(refresh_fn, shape_or_init):
     # shape_or_init is either a pytree of shapes
     # or a init function that take a key and give an init x
-    if not callable(shape_or_init):
-        size, unravel = ravel_shape(shape_or_init)
-        mu, sigma = 0., 1.
-        raw_init = lambda key: jax.random.normal(key, (size,)) * sigma + mu
-    else:
-        from jax.flatten_util import ravel_pytree
-        raw_init = lambda key: ravel_pytree(shape_or_init(key))[0]
+    with jax.ensure_compile_time_eval():
+        if not callable(shape_or_init):
+            size, unravel = ravel_shape(shape_or_init)
+            mu, sigma = 0., 1.
+            raw_init = lambda key: jax.random.normal(key, (size,)) * sigma + mu
+        else:
+            from jax.flatten_util import ravel_pytree
+            raw_init = lambda key: ravel_pytree(shape_or_init(key))[0]
 
     def init(key, params):
         sample = raw_init(key)

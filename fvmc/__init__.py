@@ -1,4 +1,4 @@
-from jax.config import config as _jax_config
+from jax import config as _jax_config
 _jax_config.update("jax_enable_x64", True)
 
 del _jax_config
