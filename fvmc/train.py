@@ -169,7 +169,8 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
     sampler = jax.tree_map(PAXIS.pmap if multi_device else jax.jit, sampler)
 
     # make optimizer
-    lr_schedule = build_lr_schedule(**optimize_cfg.lr)
+    lr_schedule = (optimize_cfg.lr if callable(optimize_cfg.lr) else
+                   build_lr_schedule(**optimize_cfg.lr))
     optimizer = build_optimizer(
         loss_and_grad,
         name=optimize_cfg.optimizer,

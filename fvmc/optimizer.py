@@ -49,6 +49,7 @@ SR_DEFAULTS = dict(
     damping=1e-3,
     shifting=None,
     max_norm=3e-2,
+    proximal=None,
     descender=None,
     momentum=None,
     use_weighted=False,

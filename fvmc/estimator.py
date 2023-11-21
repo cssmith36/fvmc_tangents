@@ -101,12 +101,14 @@ def build_eval_local_full(model, elems, cell=None, *,
     return eval_local
 
 
-def get_batched_local(eval_local_fn, mini_batch=None, unroll_loop=False):
+def get_batched_local(eval_local_fn, mini_batch=None,
+                      checkpoint=True, unroll_loop=False):
     if not mini_batch:
         return jax.vmap(eval_local_fn, in_axes=(None, 0), out_axes=0)
     def batch_local(params, data):
         partial_local = jax.vmap(partial(eval_local_fn, params), 0, 0)
-        # partial_local = jax.checkpoint(partial_local, prevent_cse=False)
+        if checkpoint:
+            partial_local = jax.checkpoint(partial_local, prevent_cse=False)
         stack_data = jax.tree_map(lambda x: x.reshape(
             x.shape[0] // mini_batch, mini_batch, *x.shape[1:]), data)
         if not unroll_loop:
@@ -126,7 +128,8 @@ def get_batched_local(eval_local_fn, mini_batch=None, unroll_loop=False):
 
 def build_eval_total(eval_local_fn, energy_clipping=None,
                      clip_from_median=False, center_shifting=False,
-                     mini_batch=None, pmap_axis_name=PMAP_AXIS_NAME,
+                     mini_batch=None, checkpoint=True, unroll_loop=False,
+                     pmap_axis_name=PMAP_AXIS_NAME,
                      use_weighted=False):
     """Create a function that evaluates quantities on the whole batch of samples.
 
@@ -164,10 +167,12 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
             clip_from_median=clip_from_median,
             center_shifting=center_shifting,
             mini_batch=mini_batch,
+            checkpoint=checkpoint,
+            unroll_loop=unroll_loop,
             pmap_axis_name=pmap_axis_name)
 
     paxis = PmapAxis(pmap_axis_name)
-    batch_local = get_batched_local(eval_local_fn, mini_batch)
+    batch_local = get_batched_local(eval_local_fn, mini_batch, checkpoint, unroll_loop)
 
     def eval_total(params, data):
         r"""return loss and statistical quantities calculated from samples.
@@ -217,7 +222,8 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
 
 def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
                               clip_from_median=False, center_shifting=True,
-                              mini_batch=None, pmap_axis_name=PMAP_AXIS_NAME):
+                              mini_batch=None, checkpoint=True, unroll_loop=False,
+                              pmap_axis_name=PMAP_AXIS_NAME):
     """Create a function that evaluates quantities on the whole batch of samples.
 
     The created function will take paramters and sampled data as input,
@@ -247,7 +253,7 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
     """
 
     paxis = PmapAxis(pmap_axis_name)
-    batch_local = get_batched_local(eval_local_fn, mini_batch)
+    batch_local = get_batched_local(eval_local_fn, mini_batch, checkpoint, unroll_loop)
 
     def eval_total(params, data):
         r"""return loss and statistical quantities calculated from samples.

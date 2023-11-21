@@ -63,11 +63,15 @@ def test_fisher_inverse_cg(damping, mixing, weighted):
         (fisher + damping*jnp.eye(3)) @ finv_grad, energy_grad, atol=1e-6)
 
 
-@pytest.mark.parametrize("weighted", [True, False])
 @pytest.mark.parametrize("complex", [True, False])
-@pytest.mark.parametrize("shifting", [1, 0.1])
-@pytest.mark.parametrize("mode", ["cg", "direct", "svd", "qr", "chol"])
-def test_fisher_with_optax(shifting, complex, mode, weighted):
+@pytest.mark.parametrize("mode", ["lazy_cg", "cg", "direct", "svd", "qr", "chol"])
+def test_fisher_mode(complex, mode):
+    weighted = False
+    damping = 1e-3
+    shifting = 1.
+    max_norm = 1e10
+    proximal = None
+    mini_batch = None
     (
         energy_grad,
         params,
@@ -76,17 +80,16 @@ def test_fisher_with_optax(shifting, complex, mode, weighted):
         log_psi_fn
     ) = _setup_fisher(shifting, complex)
 
-    damping = 1e-3
-    fisher = fisher + damping*jnp.eye(3)
-
     kwargs = {"precondition": True} if mode == "cg" else {}
     precond = scale_by_fisher_inverse(
         log_psi_fn,
         mode=mode,
         damping=damping,
         shifting=shifting,
-        max_norm=1e10,
+        max_norm=max_norm,
+        proximal=proximal,
         use_weighted=weighted,
+        mini_batch=mini_batch,
         **kwargs)
 
     opt = optax.chain(
@@ -94,15 +97,62 @@ def test_fisher_with_optax(shifting, complex, mode, weighted):
         optax.sgd(0.1, momentum=0.))
 
     state = opt.init(params)
-
-    finv = jnp.linalg.inv(fisher)
     key = jax.random.PRNGKey(0)
+    fisher = fisher + damping*jnp.eye(3)
+    finv = jnp.linalg.inv(fisher)
 
     for _ in range(3):
         key, subkey = jax.random.split(key)
         grads = jax.random.normal(subkey, energy_grad.shape)
         updates, new_state = opt.update(grads, state, params, data=positions)
         np.testing.assert_allclose(updates, -0.1 * finv @ grads)
+
+
+@pytest.mark.parametrize("weighted", [True, False])
+@pytest.mark.parametrize("proximal", [None, 0.])
+@pytest.mark.parametrize("shifting, damping, max_norm",
+                         [(1., 1., 1e10), (0.1, 1e-3, 1e-3)])
+@pytest.mark.parametrize("mode, complex, mini_batch",
+                         [("direct", True, 10), ("lazy_cg", False, None)])
+def test_fisher_keywords(mode, shifting, damping, max_norm,
+                         proximal, complex, weighted, mini_batch):
+    (
+        energy_grad,
+        params,
+        positions,
+        fisher,
+        log_psi_fn
+    ) = _setup_fisher(shifting, complex)
+
+    mode = "direct"
+    precond = scale_by_fisher_inverse(
+        log_psi_fn,
+        mode=mode,
+        damping=damping,
+        shifting=shifting,
+        max_norm=max_norm,
+        proximal=proximal,
+        use_weighted=weighted,
+        mini_batch=mini_batch)
+
+    opt = optax.chain(
+        precond,
+        optax.sgd(0.1, momentum=0.))
+
+    state = opt.init(params)
+    key = jax.random.PRNGKey(0)
+    fisher = fisher + damping*jnp.eye(3)
+    finv = jnp.linalg.inv(fisher)
+
+    for _ in range(3):
+        key, subkey = jax.random.split(key)
+        grads = jax.random.normal(subkey, energy_grad.shape)
+        target = finv @ grads
+        tnorm = jnp.sqrt((target * grads).sum())
+        if tnorm > max_norm:
+            target = target * max_norm / tnorm
+        updates, new_state = opt.update(grads, state, params, data=positions)
+        np.testing.assert_allclose(updates, -0.1 * target)
 
 
 @pytest.mark.skipif(60 % jax.device_count() != 0,
@@ -151,7 +201,7 @@ def test_fisher_multi_device(mode):
     update_fn = (lambda grads, state, params, data:
                     opt.update(grads, state, params, data=data))
     update_fn = jax.pmap(update_fn, axis_name='p',
-                            in_axes=(None, None, None, 0), out_axes=None)
+                         in_axes=(None, None, None, 0), out_axes=None)
     positions = positions.reshape(jax.device_count(), -1, 3)
 
     for _ in range(3):

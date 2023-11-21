@@ -43,8 +43,8 @@ def test_feature_pbc():
     res2 = raw_features_pbc(pr, x, cell, n_freq)
     res3 = raw_features_pbc(r, px, cell, n_freq)
 
-    chex.assert_tree_all_close(res1, res2, atol=1e-10)
-    chex.assert_tree_all_close(res1, res3, atol=1e-10)
+    chex.assert_trees_all_close(res1, res2, atol=1e-10)
+    chex.assert_trees_all_close(res1, res3, atol=1e-10)
 
 
 @pytest.fixture(scope='module', params=[_conf1, _conf2, _conf3])

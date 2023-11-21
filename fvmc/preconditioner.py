@@ -23,6 +23,7 @@ class FisherPrecondState(NamedTuple):
     """State for fisher preconditioner, logging step and optional solver state"""
     count: int
     solver_state: Any
+    prox_grads: Optional[Array] = None
 
 
 def scale_by_fisher_inverse(
@@ -31,8 +32,10 @@ def scale_by_fisher_inverse(
         damping: ScalarOrSchedule = 1e-3,
         shifting: ScalarOrSchedule = 1.,
         max_norm: ScalarOrSchedule = 3e-2,
+        proximal: Optional[ScalarOrSchedule] = None,
         use_weighted: bool = False,
         pmap_axis_name: str = PMAP_AXIS_NAME,
+        mini_batch: Optional[int] = None,
         **solver_kwargs
 ) -> GradientTransformationExtraArgs:
     r"""build a preconditioner apply inverse fisher to the grad.
@@ -64,89 +67,88 @@ def scale_by_fisher_inverse(
     _get_damping = _ensure_schedule(damping)
     _get_shift_factor = _ensure_schedule(shifting)
     _get_max_norm = _ensure_schedule(max_norm)
+    _get_proximal = _ensure_schedule(proximal)
 
     def init_fn(params):
         solver_state = (_IterSolverState(
                 x_old=jnp.zeros_like(ravel_pytree(params)[0]), mix=0.)
             if solver.lower() not in ("direct", "qr", "svd") else None)
-        return FisherPrecondState(count=0, solver_state=solver_state)
+        prox_grads = (jnp.zeros_like(ravel_pytree(params)[0])
+                          if proximal is not None else None)
+        return FisherPrecondState(count=0, solver_state=solver_state,
+                                  prox_grads=prox_grads)
 
-    # eager means the score matrix will be directly calculated and stored
-    # only one of the update fn will be used (eager or lazy)
-    def eager_update_fn(grads, state, params, data):
+    def update_fn(grads, state, params, data):
         """precondition function that apply inverse fisher matrix to gradients"""
 
+        count, solver_state, prox_grads = state
+        damping = _get_damping(count)
+        shift_factor = _get_shift_factor(count)
+        max_norm = _get_max_norm(count)
+        proximal = _get_proximal(count)
+
+        # flat log_p functions
+        grads_flat, unravel_fn = ravel_pytree(grads)
+        if proximal is not None:
+            grads_flat += damping * proximal * prox_grads
         # handle (potential) sample weights
         if not (isinstance(data, Tuple) and len(data) == 2):
             data = (data, None)
         sample, logsw = data
         n_sample = sample.shape[0]
-
-        # flat log_p functions
-        grads_flat, unravel_fn = ravel_pytree(grads)
-        score_fn = jax.vmap(
-            adaptive_grad(log_psi_fn, argnums=0),
-            in_axes=[None, 0], out_axes=0)
-        score = jax.vmap(lambda p: ravel_pytree(p)[0])(
-            score_fn(params, sample))
-
-        # paxis.mean(jnp.sum(rel_w)) == 1, and rel_w has to be positive
-        rel_w = jnp.ones(n_sample)
+        # make sure paxis.sum(jnp.sum(rel_w)) == 1, and rel_w has to be positive
+        rel_w = jnp.ones((1,))
         if use_weighted and logsw is not None:
             logpsi = jax.vmap(log_psi_fn, in_axes=[None, 0])(params, sample)
             rel_w = exp_shifted(lax.stop_gradient(2 * logpsi.real - logsw),
                                 normalize="mean", pmap_axis_name=paxis.name)[0]
-        rel_w /= (n_sample * paxis.size()) # so we will use sum for batch dim
+        rel_w /= (n_sample * paxis.size()) # so we always use sum for batch dim
 
-        count, solver_state = state
-        damping = _get_damping(count)
-        shift_factor = _get_shift_factor(count)
-        center_factor = 1. - jnp.sqrt(1. - shift_factor)
-        max_norm = _get_max_norm(count)
+        inner_fn = _lazy_inner if mode.startswith("lazy") else _eager_inner
+        precond_grads_flat, new_solver_state = inner_fn(
+            grads_flat, solver_state, params, sample, rel_w,
+            damping, shift_factor)
 
-        mean_score = paxis.psum(jnp.sum(rel_w[:, None] * score, axis=0))
-        score = score - center_factor * mean_score
-        score = score * jnp.sqrt(rel_w[:, None])
-
-        precond_grads_flat, new_solver_state = eager_fisher_inv(
-            score, grads_flat, damping, solver_state,
-            paxis=paxis, **solver_kwargs)
-        new_state = FisherPrecondState(count+1, new_solver_state)
+        new_prox_grads = precond_grads_flat if proximal is not None else None
+        new_state = FisherPrecondState(count+1, new_solver_state, new_prox_grads)
         cgrads_flat = constrain_norm(precond_grads_flat, grads_flat, max_norm)
         return unravel_fn(cgrads_flat), new_state
 
+    # eager means the score matrix will be directly calculated and stored
+    # only one of the update fn will be used (eager or lazy)
+    def _eager_inner(grads_flat, solver_state, params, sample, rel_w,
+                     damping, shift_factor):
+        _grad_fn = adaptive_grad(log_psi_fn, argnums=0)
+        score_fn = jax.vmap(lambda s: ravel_pytree(_grad_fn(params, s))[0])
+        if mini_batch is None:
+            score = score_fn(sample)
+        else:
+            batch_sample = sample.reshape(-1, mini_batch, *sample.shape[1:])
+            batch_score = lax.map(score_fn, batch_sample)
+            score = batch_score.reshape(sample.shape[0], grads_flat.shape[-1])
+        # paxis.sum(jnp.sum(rel_w)) == 1, and rel_w has to be positive
+        mean_score = paxis.psum(jnp.sum(rel_w[:, None] * score, axis=0))
+        center_factor = 1. - jnp.sqrt(1. - shift_factor)
+        score = score - center_factor * mean_score
+        score = score * jnp.sqrt(rel_w[:, None])
+        # precond_grads_flat: n_params
+        precond_grads_flat, new_solver_state = eager_fisher_inv(
+            score, grads_flat, damping, solver_state,
+            paxis=paxis, **solver_kwargs)
+        return precond_grads_flat, new_solver_state
+
     # lazy means fisher vector product is lazily evaluated in the cg iteration
     # this is only useful when the score matrix is huge and cannot be stored
-    def lazy_update_fn(grads, state, params, data):
-        """precondition function that apply inverse fisher matrix to gradients"""
-
-        # handle (potential) sample weights
-        if not (isinstance(data, Tuple) and len(data) == 2):
-            data = (data, None)
-        sample, logsw = data
-
-        # flat log_p functions
-        grads_flat, unravel_fn = ravel_pytree(grads)
-        params_flat, _ = ravel_pytree(params)
+    def _lazy_inner(grads_flat, solver_state, params, sample, rel_w,
+                    damping, shift_factor):
+        params_flat, unravel_fn = ravel_pytree(params)
         batched_logp = jax.vmap(log_psi_fn, (None, 0))
         raveled_logp = lambda p_flat: batched_logp(unravel_fn(p_flat), sample)
-
         # logpsi.shape == (n_sample,)
         logpsi, vjp_fn = jax.vjp(raveled_logp, params_flat)
         logpsi_, jvp_fn = jax.linearize(raveled_logp, params_flat)
         assert logpsi.ndim == 1
-
-        count, solver_state = state
-        damping = _get_damping(count)
-        shift_factor = _get_shift_factor(count)
-        max_norm = _get_max_norm(count)
-
-        # paxis.mean(jnp.sum(rel_w)) == 1
-        rel_w = (exp_shifted(lax.stop_gradient(2 * logpsi.real - logsw),
-                             normalize="mean", pmap_axis_name=paxis.name)[0]
-                 if use_weighted and logsw is not None else 1.)
-        rel_w /= (logpsi.shape[0] * paxis.size()) # so we will use sum for batch dim
-
+        # fvp function
         def fisher_apply(x): # (damped) fisher vector product
             # x has the same shape as grad (raveled)
             jvp = jvp_fn(x.conj()) # shape = (n_sample,) same as logp
@@ -155,20 +157,11 @@ def scale_by_fisher_inverse(
             fvp_local, = vjp_fn(jvp.conj() * rel_w)
             fvp = paxis.psum(fvp_local.real) # local sum is done by vjp
             return fvp + damping * x
-
+        # precond_grads_flat: n_params
         precond_grads_flat, new_solver_state = _stateful_iter_solve(
-            fisher_apply,
-            grads_flat,
-            solver_state,
-            solver=solver,
-            M=None,
-            **solver_kwargs)
-        new_state = FisherPrecondState(count+1, new_solver_state)
-        cgrads_flat = constrain_norm(precond_grads_flat, grads_flat, max_norm)
-        return unravel_fn(cgrads_flat), new_state
-
-    # choose only one update function
-    update_fn = lazy_update_fn if mode.startswith("lazy_") else eager_update_fn
+            fisher_apply, grads_flat, solver_state,
+            solver=solver, M=None, **solver_kwargs)
+        return precond_grads_flat, new_solver_state
 
     return GradientTransformationExtraArgs(init_fn, update_fn)
 
