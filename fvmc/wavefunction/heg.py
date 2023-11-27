@@ -138,6 +138,7 @@ class PairJastrowCCK(ElecWfn):
             for i, j in zip(cum_idx[:-1], cum_idx[1:]):
                 offdiag_mask = offdiag_mask.at[i:j, i:j].set(False)
             blkdiag_mask = jnp.triu(~offdiag_mask, k=1)
+            offdiag_mask = jnp.triu(offdiag_mask)
             multi_spin = len(self.spins) > 1 and offdiag_mask.sum() > 0
             # minimal image distance with sin wrap
             latvec = self.cell
