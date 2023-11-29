@@ -23,7 +23,7 @@ _key0 = jax.random.PRNGKey(0)
 
 def make_test_sampler(name, adaptive=False):
     maker = (choose_sampler_builder(name) if not adaptive else
-             choose_adaptive_builder(name, harmonic=True, interval=100))
+             choose_adaptive_builder(name, harmonic=(name == "hmc"), interval=100))
     if name == "gaussian":
         sampler = maker(_logprob_fn, _xshape, mu=_mean, sigma=_std)
     elif name == "black":

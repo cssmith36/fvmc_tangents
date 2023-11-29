@@ -79,6 +79,7 @@ def choose_adaptive_builder(name: str,
     else:
         reference = "is_accepted"
         increasing = False
+        transform = None
     new_kwargs = dict(keyword=keyword, reference=reference, target=target,
                       increasing=increasing, transform=transform, **kwargs)
     raw_builder = choose_sampler_builder(name)
@@ -224,7 +225,8 @@ def make_adaptive(
         raw_sampler = sampler_factory(logdens_fn, shape_or_init, **kwargs)
         # build new sampler every time
         def sample(key, params, state):
-            inner_state, count, adapt_value, ema_ref = state
+            inner_sample, inner_aux, count, adapt_value, ema_ref = state
+            inner_state = (inner_sample, *inner_aux)
             ada_kwargs = {**kwargs, keyword: adapt_value}
             ada_sampler = sampler_factory(logdens_fn, shape_or_init, **ada_kwargs)
             new_inner_state, data, info = ada_sampler.sample(key, params, inner_state)
@@ -233,20 +235,21 @@ def make_adaptive(
             adapt_value = jnp.where((count > 0) & (count % interval == 0),
                                     tuning(adapt_value, new_ema_ref),
                                     adapt_value)
-            new_state = (new_inner_state, count+1, adapt_value, new_ema_ref)
+            new_sample, *new_aux = new_inner_state
+            new_state = (new_sample, new_aux, count+1, adapt_value, new_ema_ref)
             return new_state, data, info
         # refresh the inner state
         def refresh(state, params):
-            inner_state, count, adapt_value, ema_ref = state
-            new_inner_state = raw_sampler.refresh(inner_state, params)
-            return new_inner_state, count, adapt_value, ema_ref
+            inner_sample, inner_aux, count, adapt_value, ema_ref = state
+            new_sample, *new_aux = raw_sampler.refresh((inner_sample, *inner_aux), params)
+            return new_sample, new_aux, count, adapt_value, ema_ref
         # init inner state and wrap it with adapting kwarg
         def init(key, params):
             count = 0
-            inner_state = raw_sampler.init(key, params)
+            inner_sample, *inner_aux = raw_sampler.init(key, params)
             init_value = kwargs.get(keyword, 0.1) # defaults to 0.1
             ema_ref = 0.
-            return (inner_state, count, init_value, ema_ref)
+            return (inner_sample, inner_aux, count, init_value, ema_ref)
         # assemble the adaptive sampler
         return MCSampler(sample, init, refresh)
 
