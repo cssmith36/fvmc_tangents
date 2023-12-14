@@ -178,7 +178,7 @@ def gen_kidx(n_d, n_k, close_shell=True):
         return kall[sidx[:n_k]]
     else:
         shell_select = onp.nonzero(k2[sidx] <= k2[sidx[n_k-1]])
-        return kall[sidx[shell_select]]
+        return kall[sidx][shell_select]
 
 
 def build_moving_avg(decay=0.99, early_growth=True):
