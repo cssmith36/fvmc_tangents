@@ -5,9 +5,10 @@ import numpy as np
 import pytest
 from jax import numpy as jnp
 
+from fvmc.utils import exp_shifted
 from fvmc.sampler import (build_conf_init_fn, choose_adaptive_builder,
                           choose_sampler_builder, make_batched, make_chained,
-                          make_multistep)
+                          make_multistep, relavistic_ke, sample_relavistic_momentum)
 
 _mean = 0.5
 _std = 0.5
@@ -118,5 +119,30 @@ def test_sampler_chained():
 def test_sampler_grad_clipping(name):
     maker = choose_sampler_builder(name)
     sampler = maker(_logprob_fn, _xshape, grad_clipping=0.5)
+    sampler = make_multistep(make_batched(sampler, _nchain, concat=False), _nstep, concat=False)
+    shared_sampler_test(sampler, jit=True)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("c", [1, 10])
+def test_relativistic_kinetic(c):
+    p = sample_relavistic_momentum(_key0, c, shape=(2000000,))
+    # check velocity is bounded
+    v = jax.jit(jax.vmap(jax.grad(lambda p: relavistic_ke(p, c=c))))(p)
+    assert jnp.all((v < c) & (v > -c))
+    # check momentum distribution is correct
+    lim = abs(p).max() * 1.1
+    counts, bins = jnp.histogram(p, bins=100, range=(-lim, lim), density=True)
+    mid = (bins[1:] + bins[:-1]) / 2
+    ke = jax.jit(relavistic_ke)(mid, c=c)
+    density = exp_shifted(-ke, normalize="sum")[0] / (2 * lim / counts.shape[0])
+    np.testing.assert_allclose(counts, density, atol=3e-3)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("speed_limit", [1., 10.])
+def test_sampler_hmc_relativistic(speed_limit):
+    sampler = choose_sampler_builder("hmc")(
+        _logprob_fn, _xshape, length=None, steps=10, segments=2, speed_limit=speed_limit)
     sampler = make_multistep(make_batched(sampler, _nchain, concat=False), _nstep, concat=False)
     shared_sampler_test(sampler, jit=True)

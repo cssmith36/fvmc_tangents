@@ -12,6 +12,7 @@ from optax import bias_correction, update_moment
 from .utils import (PMAP_AXIS_NAME, Array, ArrayTree, PmapAxis, PyTree,
                     adaptive_split, build_moving_avg, clip_gradient,
                     parse_spin, ravel_shape, tree_where)
+from .utils import log_cosh, sample_genlogistic # for relavistic hmc
 
 KeyArray = Array
 Params = ArrayTree
@@ -358,7 +359,8 @@ def build_langevin(logdens_fn, shape_or_init, tau=0.1, steps=10,
 
 
 def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1.,
-                      mass=1., jittered=False, grad_clipping=None,
+                      steps=None, segments=1, mass=1., speed_limit=None,
+                      jittered=False, grad_clipping=None,
                       vmap_axis_name=MC_BATCH_AXIS_NAME,
                       pmap_axis_name=PMAP_AXIS_NAME):
     # initialize pmap and vmap utilities
@@ -373,8 +375,19 @@ def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1.,
     mass = _align_vector(mass, sample_shape)
     scale = jnp.sqrt(mass)
     # kinetic energy function
-    ke_fn = lambda p: -logd_gaussian(p).sum(-1)
-    draw_momentum = partial(jax.random.normal, shape=(xsize,))
+    if speed_limit is None:
+        ke_fn = lambda p: -logd_gaussian(p, 0, 1).sum(-1)
+        draw_momentum = jax.random.normal
+    else:
+        ke_fn = lambda p: relavistic_ke(p, speed_limit).sum(-1)
+        draw_momentum = partial(sample_relavistic_momentum, c=speed_limit)
+    # align length
+    if steps is not None:
+        if length is not None:
+            from . import LOGGER
+            LOGGER.warning("Both steps and length are given in hmc, use steps.")
+        length = steps * dt + 1e-12 # add a small number to gaurantee steps
+    length /= segments
 
     def _jitter_length(extra_state):
         if not jittered:
@@ -383,25 +396,34 @@ def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1.,
         jlength = (1 - float(jittered) * jax.random.uniform(subkey)) * length
         return jlength, (jkey, *extra_state[1:])
 
-    def sample(key, params, state):
+    def step(key, params, state):
         gkey, ukey = jax.random.split(key)
         q1, g1, ld1, *extras = state
         # scaled coordinates to account for mass
         q1s, f1s, v1 = q1 * scale, -g1 / scale, -ld1
-        p1 = draw_momentum(gkey)
-        # pot fn take scaled q as input
-        potential_fn = lambda xs: -ravel_logd(params, xs / scale)
-        # determine integration length
+        p1 = draw_momentum(gkey, shape=(xsize,))
+        # pe fn take scaled q as input
+        pe_fn = lambda xs: -ravel_logd(params, xs / scale)
+        # determine integration length and prepare leap frog
         length, extras = _jitter_length(extras)
-        leapfrog = gen_leapfrog(potential_fn, dt, round(length / dt), True)
+        leapfrog = gen_leapfrog(pe_fn, dt, round(length / dt),
+                                kinetic_fn=ke_fn, with_carry=True)
+        # the actual integration
         q2s, p2, f2s, v2 = leapfrog(q1s, p1, f1s, v1)
-        log_ratio = (-ke_fn(-p2) - v2) - (-ke_fn(p1) - v1)
         # scale back the coordinates for output
         q2, g2, ld2 = q2s / scale, -f2s * scale, -v2
+        # metroplis-hastings selection according to the hamiltonian
+        log_ratio = (-ke_fn(-p2) - v2) - (-ke_fn(p1) - v1)
         (qn, gn, ldn), accepted = mh_select(ukey, log_ratio, state[:3], (q2, g2, ld2))
-        info = {"is_accepted": accepted,
+        return (qn, gn, ldn, *extras), accepted, log_ratio
+
+    def sample(key, params, state):
+        multi_step = make_multistep_fn(step, segments, concat=False)
+        new_state, accepted, log_ratio = multi_step(key, params, state)
+        new_sample, new_grads, new_logdens, *extras = new_state
+        info = {"is_accepted": accepted.mean(),
                 "recip_ratio": _recip_ratio(log_ratio).mean()}
-        return (qn, gn, ldn, *extras), (unravel(qn), ldn), info
+        return new_state, (unravel(new_sample), new_logdens), info
 
     def refresh(state, params):
         sample = state[0]
@@ -454,7 +476,7 @@ def build_blackjax(logdens_fn, shape_or_init, kernel="nuts", grad_clipping=None,
 
 def logd_gaussian(x, mu=0., sigma=1.):
     """unnormalized log density of Gaussian distribution"""
-    return -0.5 * ((x - mu) / sigma) ** 2
+    return -0.5 * jnp.square((x - mu) / sigma)
 
 
 def mh_select(key, ratio, state1, state2):
@@ -464,32 +486,52 @@ def mh_select(key, ratio, state1, state2):
     return new_state, cond
 
 
-def gen_leapfrog(potential_fn, dt, steps, with_carry=True):
-    pot_and_grad = jax.value_and_grad(potential_fn)
+def gen_leapfrog(potential_fn, dt, steps, kinetic_fn=None, with_carry=True):
+    pe_and_grad = jax.value_and_grad(potential_fn)
+    velocity_fn = (lambda p: p) if kinetic_fn is None else jax.grad(kinetic_fn)
 
     def leapfrog_carry(q, p, g, v):
         # p for momentom and q for position
         # g for grad (neg force) and v for potential
         # simple Euler integration step
-        def int_step(i, carry):
+        def integral_step(i, carry):
             q, p = carry
-            q += dt * p
-            p -= dt * pot_and_grad(q)[1].conj()
+            q += dt * velocity_fn(p)
+            p -= dt * pe_and_grad(q)[1].conj()
             return (q, p)
         # leapfrog by shifting half step
         p -= 0.5 * dt * g # first half p
-        (q, p) = lax.fori_loop(1, steps, int_step, (q, p))
-        q += dt * p # final whole step update of q
-        v, g = pot_and_grad(q)
+        (q, p) = lax.fori_loop(1, steps, integral_step, (q, p))
+        q += dt * velocity_fn(p) # final whole step update of q
+        v, g = pe_and_grad(q)
         g = g.conj() # for potential complex variables
         p -= 0.5 * dt * g # final half p
         return q, p, g, v
 
     def leapfrog_nocarry(q, p):
-        v, g = pot_and_grad(q)
+        v, g = pe_and_grad(q)
         return leapfrog_carry(q, p, g, v)[:2]
 
     return leapfrog_carry if with_carry else leapfrog_nocarry
+
+
+def relavistic_ke(p, c):
+    r"""relavistic kinetic energy, use formula $K(p) = c^2 \log(\cosh(p / c))$
+
+    It is relativistic in the sense that the velocity $dK/dp = c \tanh(p / c)$
+    is bounded between -c and c, and is roughly linear for small $p$.
+    """
+    return c**2 * log_cosh(p / c)
+
+
+def sample_relavistic_momentum(key, c, shape=(), dtype=float):
+    r"""Sample momentum from relativistic distribution
+
+    The distribution is defined by the kinetic energy $K(p) = c^2 \log(\cosh(p / c))$.
+    Hence the momentum is sampled from the distribution $p \sim \exp(-K(p))$, which
+    is a generalized logistic distribution with scale $c/2$, and $a = b = c^2/2$.
+    """
+    return sample_genlogistic(key, c**2/2, c**2/2, shape, dtype) * c / 2
 
 
 def _recip_ratio(log_ratio):

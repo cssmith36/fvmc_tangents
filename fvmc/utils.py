@@ -80,6 +80,54 @@ def symmetrize(x):
     return (x + _H(x)) / 2
 
 
+@jax.custom_jvp
+def log_cosh(x):
+  """Numerically stable log_cosh, borrwoed from tfp."""
+  # log(cosh(x)) = log(e^x + e^-x) - log(2).
+  # For x > 0, we can rewrite this as x + log(1 + e^(-2 * x)) - log(2).
+  # The second term will be small when x is large, so we don't get any large
+  # cancellations.
+  # Similarly for x < 0, we can rewrite the expression as -x + log(1 + e^(2 *
+  # x)) - log(2)
+  # This gives us abs(x) + softplus(-2 * abs(x)) - log(2)
+
+  # For x close to zero, we can write the taylor series of softplus(
+  # -2 * abs(x)) to see that we get;
+  # log(2) - abs(x) + x**2 / 2. - x**4 / 12 + x**6 / 45. + O(x**8)
+  # We can cancel out terms to get:
+  # x ** 2 / 2.  * (1. - x ** 2 / 6) + x ** 6 / 45. + O(x**8)
+  # For x < 45 * sixthroot(smallest normal), all higher level terms
+  # disappear and we can use the above expression.
+  from jax.nn import softplus
+  abs_x = abs(x)
+  logcosh = abs_x + softplus(-2 * abs_x) - jnp.log(2)
+  bound = 45. * jnp.power(jnp.finfo(jnp.dtype(x)).tiny, 1 / 6.)
+  return jnp.where(
+      abs_x <= bound,
+      jnp.exp(jnp.log(abs_x) + jnp.log1p(-jnp.square(abs_x) / 6.)),
+      logcosh)
+
+@log_cosh.defjvp
+def _log_cosh_jvp(primals, tangents):
+    # derivative of log(cosh(x)) is tanh(x)
+    x, = primals
+    x_dot, = tangents
+    return log_cosh(x), x_dot * jnp.tanh(x)
+
+
+def sample_genlogistic(key, a, b, shape=(), dtype=float):
+    """Sample from type 4 generalized logistic distribution.
+
+    See https://en.wikipedia.org/wiki/Generalized_logistic_distribution for details.
+    Sample is generated as log(gamma_a) - log(gamma_b), where gamma_a and gamma_b
+    are sampled from gamma distributions with parameters a and b, respectively.
+    """
+    keya, keyb = jax.random.split(key)
+    loggamma_a = jax.random.loggamma(keya, a, shape=shape, dtype=dtype)
+    loggamma_b = jax.random.loggamma(keyb, b, shape=shape, dtype=dtype)
+    return loggamma_a - loggamma_b
+
+
 def chol_qr(x, shift=None, psum_axis=None):
     *_, m, n = x.shape
     a = _H(x) @ x
