@@ -186,9 +186,13 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
 
     # make training states
     if "states" in restart_cfg and restart_cfg.states:
-        LOGGER.info("Loading parameters and states from saved file")
-        state_path = multi_process_name(restart_cfg.states)
-        train_state = TrainingState(*load_pickle(state_path))
+        if isinstance(restart_cfg.states, str):
+            LOGGER.info("Loading parameters and states from saved file")
+            state_path = multi_process_name(restart_cfg.states)
+            train_state = TrainingState(*load_pickle(state_path))
+        else:
+            LOGGER.info("Restart from parameters and states in config")
+            train_state = TrainingState(*restart_cfg.states)
         train_state = match_loaded_state_to_device(train_state, multi_device)
     else:
         LOGGER.info("Initializing parameters and states")
@@ -196,10 +200,17 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
             "key is required if not restarting from previous state"
         # initialize params
         if "params" in restart_cfg and restart_cfg.params:
-            LOGGER.info("Loading parameters from saved file")
-            param_path = multi_process_name(restart_cfg.params)
-            params = load_pickle(param_path)
-            if isinstance(params, tuple): params = params[1]
+            if isinstance(restart_cfg.params, str):
+                LOGGER.info("Loading parameters from saved file")
+                param_path = multi_process_name(restart_cfg.params)
+                params = load_pickle(param_path)
+            else:
+                LOGGER.info("Restart from parameters in config")
+                params = restart_cfg.params
+            if isinstance(params, tuple):
+                params = params[1]
+            if isinstance(params, ConfigDict): # happen to be converted
+                params = params.to_dict()
         else:
             key, parkey, skey = jax.random.split(key, 3) # init use single key
             fake_input = conf_init_fn(skey)
@@ -351,6 +362,15 @@ def run(step_fn, train_state, iterations, log_cfg):
 
 def main(cfg):
     cfg = ConfigDict(cfg)
+
+    import subprocess as sp
+    try:
+        cfg._git_hash = sp.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=os.path.dirname(os.path.abspath(__file__))
+        ).decode().strip()
+    except sp.CalledProcessError:
+        cfg._git_hash = None
 
     if "hpar_path" in cfg.log and jax.process_index() == 0:
         with open(cfg.log.hpar_path, "w") as hpfile:
