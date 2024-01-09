@@ -4,7 +4,7 @@ import chex
 import pytest
 from jax import numpy as jnp
 
-from fvmc.wavefunction.heg import ElecProductModel, PlanewaveSlater, PairJastrowCCK
+from fvmc.wavefunction.heg import PlanewaveSlater, PairJastrowCCK
 
 
 _key0 = jax.random.PRNGKey(0)

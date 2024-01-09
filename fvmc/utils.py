@@ -491,15 +491,11 @@ class Serial(nn.Module):
             tmp = lyr(x)
             if i != len(self.layers) - 1:
                 tmp = actv(tmp)
-            if self.residual:
-                if x.shape[-1] >= tmp.shape[-1]:
-                    x = x[...,:tmp.shape[-1]] + tmp
-                elif x.shape[-1] * 2 == tmp.shape[-1]:
-                    x = jnp.concatenate([x, x], axis=-1) + tmp
-                else:
-                    x = tmp.at[...,:x.shape[-1]].add(x)
-                if self.rescale:
-                    x /= jnp.sqrt(2.)
+            scale = jnp.sqrt(2.) if self.rescale else 1.
+            if self.residual and x.shape[-1] == tmp.shape[-1]:
+                x = (x + tmp) / scale
+            elif self.residual and x.shape[-1] * 2 == tmp.shape[-1]:
+                x = (jnp.concatenate([x, x], axis=-1) + tmp) / scale
             else:
                 x = tmp
         return x
@@ -507,12 +503,15 @@ class Serial(nn.Module):
 
 def build_mlp(
     layer_sizes: Sequence[int],
-    residual: bool = True,
     activation: Union[str, Callable] = "gelu",
+    residual: bool = True,
     rescale: bool = False,
+    last_bias: bool = False,
     **dense_kwargs
 ) -> Serial:
-    layers = [nn.Dense(ls, **dense_kwargs) for ls in layer_sizes]
+    layers = [nn.Dense(ls, **dense_kwargs) for ls in layer_sizes[:-1]]
+    layers.append(nn.Dense(layer_sizes[-1],
+                           **{**dense_kwargs, "use_bias": last_bias}))
     return Serial(layers,
                   residual=residual, activation=activation, rescale=rescale)
 

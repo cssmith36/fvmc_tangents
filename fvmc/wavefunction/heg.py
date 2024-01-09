@@ -1,6 +1,6 @@
 import functools
 from dataclasses import field as _field
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple, Union
 
 import jax
 import numpy as onp
@@ -14,14 +14,23 @@ from .base import ElecWfn
 class ElecProductModel(ElecWfn):
     submodels: Sequence[nn.Module]
     backflow: Optional[nn.Module] = None
+    apply_backflow: Union[bool, Sequence[bool]] = True
 
     @nn.compact
     def __call__(self, x: Array) -> Tuple[Array, Array]:
-        if self.backflow is not None:
-            x = self.backflow(x)
+        apply_backflow = (self.apply_backflow
+                          if not isinstance(self.apply_backflow, bool)
+                          else [self.apply_backflow] * len(self.submodels))
         sign, logf = 1., 0.
-        for model in self.submodels:
-            result = model(x)
+        x_bf = x
+        if self.backflow is not None:
+            out = self.backflow(x)
+            if isinstance(out, tuple):
+                x_bf, (sign, logf) = out
+            else:
+                x_bf = out
+        for model, with_bf in zip(self.submodels, apply_backflow):
+            result = model(x_bf if with_bf else x)
             if isinstance(result, tuple):
                 sign *= result[0]
                 logf += result[1]
@@ -97,13 +106,13 @@ class PlanewaveOrbital(nn.Module):
         # plane wave
         eikx = jnp.exp(1j * x @ kvecs.T) # [n_elec, n_k]
         # dense for coefficients
-        pwDense = functools.partial(
+        PWDense = functools.partial(
             nn.Dense, use_bias=False, param_dtype=_t_real,
             kernel_init=nn.initializers.normal(self.init_scale))
         # work on spins
         if self.spin_symmetry:
             n_orb = max(self.spins) if not self.full_det else n_elec
-            raw_orbs = pwDense(n_orb)(eikx) # [n_elec, n_orb]
+            raw_orbs = PWDense(n_orb)(eikx) # [n_elec, n_orb]
             if self.full_det:
                 orbitals = [raw_orbs]
             else:
@@ -114,10 +123,10 @@ class PlanewaveOrbital(nn.Module):
             pw_secs = jnp.split(eikx, split_idx, axis=0)
             if self.full_det:
                 orbitals = [jnp.concatenate([
-                    pwDense(n_elec)(pw_si) for pw_si in pw_secs
+                    PWDense(n_elec)(pw_si) for pw_si in pw_secs
                 ], axis=0)] # [sum(n_si), n_elec]
             else:
-                orbitals = [pwDense(n_si)(pw_si)
+                orbitals = [PWDense(n_si)(pw_si)
                             for n_si, pw_si in zip(self.spins, pw_secs)]
         return orbitals
 

@@ -13,7 +13,7 @@ from .base import FullWfn
 from .neuralnet import ElectronCusp, FermiLayer
 
 
-def raw_features_pbc(r, x, latvec, n_freq):
+def raw_features_pbc(r, x, latvec, n_freq, frac_dist=False):
     n_elec = x.shape[0]
     n_nucl = r.shape[0]
     n_p = n_nucl + n_elec
@@ -26,7 +26,9 @@ def raw_features_pbc(r, x, latvec, n_freq):
     pos_frac = pos @ invvec
     d_frac = displace_matrix(pos_frac, pos_frac)
     d_frac = (d_frac + 0.5) % 1. - 0.5
-    d_hsin = jnp.sin(jnp.pi * d_frac) @ latvec/jnp.pi
+    d_hsin = jnp.sin(jnp.pi * d_frac)
+    if not frac_dist:
+        d_hsin = d_hsin @ (latvec / jnp.pi)
     dist = jnp.linalg.norm(
         d_hsin + jnp.eye(n_p)[..., None],
         keepdims=True, axis=-1) * (1.0 - jnp.eye(n_p)[..., None])
@@ -233,7 +235,7 @@ class FermiNetPbc(FullWfn):
         sign, logpsi = sign[0], logpsi[0]
 
         jastrow = build_mlp([h1.shape[-1]] * self.jastrow_layers + [1],
-            residual=True, activation=self.activation,
+            residual=True, activation=self.activation, last_bias=False,
             rescale=self.rescale_residual, param_dtype=_t_real)
         jastrow_weight = self.param(
             "jastrow_weights", nn.initializers.zeros, ())

@@ -308,7 +308,7 @@ class FermiNet(FullWfn):
         sign, logpsi = sign[0], logpsi[0]
 
         jastrow = build_mlp([h1.shape[-1]] * self.jastrow_layers + [1],
-            residual=True, activation=self.activation,
+            residual=True, activation=self.activation, last_bias=False,
             rescale=self.rescale_residual, param_dtype=_t_real)
         jastrow_weight = self.param(
             "jastrow_weights", nn.initializers.zeros, ())
