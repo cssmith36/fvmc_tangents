@@ -221,12 +221,12 @@ def gen_kidx(n_d, n_k, close_shell=True):
     mesh = onp.stack(onp.meshgrid(*([grid] * n_d), indexing='ij'), axis=-1)
     kall = mesh.reshape(-1, n_d)
     k2 = (kall ** 2).sum(-1)
-    sidx = onp.argsort(k2)
+    sidx = onp.lexsort((*kall.T[::-1], k2))
     if not close_shell:
         return kall[sidx[:n_k]]
     else:
-        shell_select = onp.nonzero(k2[sidx] <= k2[sidx[n_k-1]])
-        return kall[sidx][shell_select]
+        shell_select = k2[sidx] <= k2[sidx[n_k-1]]
+        return kall[sidx[shell_select]]
 
 
 def build_moving_avg(decay=0.99, early_growth=True):
