@@ -7,7 +7,8 @@ import numpy as onp
 from flax import linen as nn
 from jax import numpy as jnp
 
-from ..utils import Array, _t_real, displace_matrix, fix_init, gen_kidx
+from ..utils import (Array, _t_real, displace_matrix, fix_init, gen_kidx,
+                     log_linear_exp)
 from .base import ElecWfn
 
 
@@ -75,7 +76,7 @@ class PlanewaveSlater(ElecWfn):
             )(**kwargs)(x)
             sign, logf = functools.reduce(det_reducer, orbitals, (1., 0.))
             weights = self.param("det_weights", nn.initializers.ones, (self.multi_det,))
-            return jax.nn.logsumexp(logf, b=weights*sign, return_sign=True)[::-1]
+            return log_linear_exp(sign, logf, weights, axis=0)
 
 
 class PlanewaveOrbital(nn.Module):

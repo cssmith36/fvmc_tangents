@@ -454,8 +454,8 @@ def log_linear_exp(
         vals (Array): array of log|abs(x)| with shape (..., d, ...), where d is
             the size of the given axis
         weights (Array, optional): weights of a linear transformation to apply to
-            the given axis, with shape (d, d'). If not provided, a simple sum is taken
-            instead, equivalent to (d, 1) weights equal to 1. Defaults to None.
+            the given axis, with shape (d, d') or (d,). If not provided, a simple sum
+             is taken instead, equivalent to (d,) weights equal to 1. Defaults to None.
         axis (int, optional): axis along which to take the sum and max. Defaults to 0.
     Returns:
         Tuple[Array, Array]: sign of linear combination, log of linear
@@ -465,16 +465,22 @@ def log_linear_exp(
     max_val = jnp.max(vals, axis=axis, keepdims=True)
     shifted = signs * jnp.exp(vals - max_val)
     if weights is not None:
+        w1d = weights.ndim == 1
+        weights = weights[:, None] if w1d else weights
         # swap axis and -1 to conform to jnp.dot api
         shifted = jnp.swapaxes(shifted, axis, -1)
         result = shifted @ weights
         # swap axis and -1 back after the contraction
         result = jnp.swapaxes(result, axis, -1)
     else:
+        w1d = True
         result = jnp.sum(shifted, axis=axis, keepdims=True)
     absres = jnp.abs(result)
     nsigns = result / absres if jnp.iscomplexobj(result) else jnp.sign(result)
     nvals = jnp.log(absres) + max_val
+    if w1d:
+        nsigns = jnp.squeeze(nsigns, axis=axis)
+        nvals = jnp.squeeze(nvals, axis=axis)
     return nsigns, nvals
 
 

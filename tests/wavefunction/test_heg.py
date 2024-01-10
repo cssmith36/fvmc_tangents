@@ -35,6 +35,7 @@ def _check_perm(key, model, params, cell, anti_symm=True):
     x_perm = x[perm]
     sign1, logf1 = model.apply(params, x)
     sign2, logf2 = model.apply(params, x_perm)
+    assert not jnp.iscomplexobj(logf1)
     np.testing.assert_allclose(sign2, -sign1 if anti_symm else sign1)
     np.testing.assert_allclose(logf2, logf1)
 
