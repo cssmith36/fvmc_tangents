@@ -277,14 +277,15 @@ def estimate_activation_gain(actv_fn):
 
 def parse_activation(name, rescale=False, **kwargs):
     if callable(name):
-        actv_fn = name
+        raw_actv_fn = name
     else:
-        actv_fn = getattr(nn, name)
+        raw_actv_fn = getattr(nn, name)
+    actv_fn = partial(raw_actv_fn, **kwargs)
     if rescale:
         gain = estimate_activation_gain(actv_fn) if rescale is True else rescale
-        return lambda *x: actv_fn(*x, **kwargs) * gain
+        return lambda *x: actv_fn(*x) * gain
     else:
-        return partial(actv_fn, **kwargs)
+        return actv_fn
 
 
 def parse_bool(keys, inputs):
