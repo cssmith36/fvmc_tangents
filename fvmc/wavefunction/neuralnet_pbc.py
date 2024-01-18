@@ -13,6 +13,29 @@ from .base import FullWfn
 from .neuralnet import ElectronCusp, FermiLayer
 
 
+def dist_features_pbc(pos, latvec, frac_dist=False, keepdims=True):
+    n = len(pos)
+    # orthorhombic minimum-image displacement
+    invvec = jnp.linalg.inv(latvec)
+    pos_frac = pos @ invvec
+    d_frac = displace_matrix(pos_frac, pos_frac)
+    d_frac = d_frac - jnp.rint(d_frac)
+    # sin wrap displacement
+    d_hsin = jnp.sin(jnp.pi * d_frac)  # output \in [0, 1)
+    if not frac_dist:
+        d_hsin = d_hsin @ (latvec / jnp.pi)
+    # distance (pad diagonal)
+    dist = jnp.linalg.norm(
+        d_hsin + jnp.eye(n)[..., None],
+        keepdims=keepdims, axis=-1)
+    # zero diagonal
+    if keepdims:
+        dist = dist * (1.0 - jnp.eye(n)[..., None])
+    else:
+        dist = dist * (1.0 - jnp.eye(n))
+    return d_frac, d_hsin, dist
+
+
 def raw_features_pbc(r, x, latvec, n_freq, frac_dist=False):
     n_elec = x.shape[0]
     n_nucl = r.shape[0]
@@ -22,16 +45,8 @@ def raw_features_pbc(r, x, latvec, n_freq, frac_dist=False):
     # initial h1 is empty, trick to avoid error in kfac
     h1 = pos[:, :1] * 0
     # h2 for pbc handling
-    invvec = jnp.linalg.inv(latvec)
-    pos_frac = pos @ invvec
-    d_frac = displace_matrix(pos_frac, pos_frac)
-    d_frac = (d_frac + 0.5) % 1. - 0.5
-    d_hsin = jnp.sin(jnp.pi * d_frac)
-    if not frac_dist:
-        d_hsin = d_hsin @ (latvec / jnp.pi)
-    dist = jnp.linalg.norm(
-        d_hsin + jnp.eye(n_p)[..., None],
-        keepdims=True, axis=-1) * (1.0 - jnp.eye(n_p)[..., None])
+    d_frac, _, dist = dist_features_pbc(pos, latvec,
+        frac_dist=frac_dist, keepdims=True)
     freqs = jnp.arange(1, n_freq+1).reshape(-1, 1)
     radfreqs = 2 * jnp.pi * freqs
     d_asin = jnp.sin(radfreqs * d_frac[:,:,None,:])

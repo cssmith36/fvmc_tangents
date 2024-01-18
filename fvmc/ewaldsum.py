@@ -133,8 +133,9 @@ def gen_pbc_disp_fn(latvec, mode="auto"):
         latdiag = jnp.diagonal(latvec)
         def diagonal_disp(xa, xb):
             disp = xa - xb
-            shifted_disp = (disp + latdiag/2) % latdiag - latdiag/2
-            return shifted_disp
+            frac_disp = disp/latdiag
+            shifted_frac_disp = frac_disp - jnp.rint(frac_disp)
+            return shifted_frac_disp * latdiag
         return diagonal_disp
     # orthogonal cell
     if mode.startswith("orth"):
@@ -142,7 +143,7 @@ def gen_pbc_disp_fn(latvec, mode="auto"):
         def orthogonal_disp(xa, xb):
             disp = xa - xb
             frac_disp = disp @ invvec
-            shifted_frac_disp = (frac_disp + 0.5) % 1 - 0.5
+            shifted_frac_disp = frac_disp - jnp.rint(frac_disp)
             return shifted_frac_disp @ latvec
         return orthogonal_disp
     # general cell

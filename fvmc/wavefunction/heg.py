@@ -1,6 +1,6 @@
 import functools
 from dataclasses import field as _field
-from typing import Optional, Sequence, Tuple, Union
+from typing import Optional, Sequence, Tuple, Union, Callable
 
 import jax
 import numpy as onp
@@ -10,6 +10,17 @@ from jax import numpy as jnp
 from ..utils import (Array, _t_real, displace_matrix, fix_init, gen_kidx,
                      log_linear_exp)
 from .base import ElecWfn
+from .neuralnet_pbc import dist_features_pbc
+
+
+def heg_rs(cell: Array, nelec: int) -> float:
+    """Calculate density parameter r_s of the homogeneous electron gas
+    """
+    ndim = len(cell)
+    vol = jnp.abs(jnp.linalg.det(cell))
+    vol_pp = vol/nelec
+    rs = ((2*(ndim-1)*jnp.pi)/(ndim*vol_pp))**(-1./ndim)
+    return rs
 
 
 class ElecProductModel(ElecWfn):
@@ -142,22 +153,11 @@ class PairJastrowCCK(ElecWfn):
         # preparation constants
         with jax.ensure_compile_time_eval():
             n_elec, ndim = x.shape
-            assert sum(self.spins) == n_elec
-            cum_idx = onp.cumsum([0, *self.spins])
-            offdiag_mask = jnp.ones((n_elec, n_elec), dtype=bool)
-            for i, j in zip(cum_idx[:-1], cum_idx[1:]):
-                offdiag_mask = offdiag_mask.at[i:j, i:j].set(False)
-            blkdiag_mask = jnp.triu(~offdiag_mask, k=1)
-            offdiag_mask = jnp.triu(offdiag_mask)
+            blkdiag_mask, offdiag_mask = block_diagonal_masks(self.spins, n_elec, True)
             multi_spin = len(self.spins) > 1 and offdiag_mask.sum() > 0
-            # minimal image distance with sin wrap
             latvec = self.cell
-            invvec = jnp.linalg.inv(latvec)
-        x_frac = x @ invvec
-        d_frac = displace_matrix(x_frac, x_frac)
-        d_frac = (d_frac + 0.5) % 1. - 0.5
-        d_hsin = jnp.sin(jnp.pi * d_frac) @ (latvec / jnp.pi)
-        dist = jnp.linalg.norm(d_hsin + jnp.eye(n_elec)[..., None], axis=-1)
+        # minimal image distance with sin wrap
+        _, _, dist = dist_features_pbc(x, latvec, frac_dist=False, keepdims=False)
         # Jastrow
         jb = 0
         jd = 1 / self.param("inv_jd", fix_init, 1/self.init_jd, _t_real)
@@ -169,7 +169,162 @@ class PairJastrowCCK(ElecWfn):
             logpsi -= jastrow_CCK(dist[offdiag_mask], jb, jd, cusp).sum()
         return 1, logpsi
 
+
 def jastrow_CCK(r, jb, jd, cusp):
     #  (Ceperley, Chester, Kalos 1977)
     A = 2 * jd**2 * cusp / (1 + 2 * jb**2)
     return A * jnp.exp(-jb * r) * (1 - jnp.exp(-r / jd)) / r
+
+
+def block_diagonal_masks(spins: Sequence[int], n_elec: int, triu: bool) -> Tuple[Array]:
+    assert sum(spins) == n_elec
+    cum_idx = onp.cumsum([0, *spins])
+    offdiag_mask = jnp.ones((n_elec, n_elec), dtype=bool)
+    for i, j in zip(cum_idx[:-1], cum_idx[1:]):
+        offdiag_mask = offdiag_mask.at[i:j, i:j].set(False)
+    if triu:
+        blkdiag_mask = jnp.triu(~offdiag_mask, k=1)
+        offdiag_mask = jnp.triu(offdiag_mask)
+    else:
+        blkdiag_mask = ~offdiag_mask
+    return blkdiag_mask, offdiag_mask
+
+
+class BackflowEtaKCM(nn.Module):
+
+    @nn.compact
+    def __call__(self, r: float) -> float:
+        # parameters
+        lamb = self.param('lamb', fix_init, 0.1, _t_real)
+        sb = self.param('sb', fix_init, 0.5, _t_real)
+        rb = self.param('rb', fix_init, 0.05, _t_real)
+        wb = self.param('wb', fix_init, 0.0, _t_real)
+        y = backflow_eta_KCM(r, lamb, sb, rb, wb)
+        return y
+
+
+def backflow_eta_KCM(x, lam, sb, rb, wb):
+    # Y. Kwon, D.M. Ceperley, R.M. Martin, PRB 48, 12037 (1993)
+    # eq. (14), see params in Table I
+    # x = r/rs
+    nume = 1 + sb * x
+    deno = rb + wb * x + x**(7/2)
+    return lam * nume / deno
+
+
+def polynomial_envelope(x: Array, p: int = 6, x_max: float=1.0) -> Array:
+    #  smoothly cut off function defined from x \in [0, 1)
+    #  arXiv: 2003.03123 eq. (8)
+    p1 = p+1
+    p2 = p+2
+    a = -p1*p2/2
+    b = p*p2
+    c = -p*p1/2
+    d = x/x_max
+    y = 1+a*d**p+b*d**p1+c*d**p2
+    return jnp.where(d>1, 0.0, y)
+
+
+# from e3nn-jax with Apache 2.0
+def bessel(x: Array, n: int, x_max: float = 1.0) -> Array:
+    r"""Bessel basis functions.
+
+    They obey the following normalization:
+
+    .. math::
+
+        \int_0^c r^2 B_n(r, c) B_m(r, c) dr = \delta_{nm}
+
+    Args:
+        x (jax.Array): input of shape ``[...]``
+        n (int): number of basis functions
+        x_max (float): maximum value of the input
+
+    Returns:
+        jax.Array: basis functions of shape ``[..., n]``
+
+    Klicpera, J.; Groß, J.; Günnemann, S. Directional Message Passing for Molecular Graphs;
+    ICLR 2020. Equation (7)
+    """
+    x = jnp.asarray(x)
+    assert isinstance(n, int)
+
+    x = x[..., None]
+    n = jnp.arange(1, n + 1, dtype=x.dtype)
+    x_nonzero = jnp.where(x == 0.0, 1.0, x)
+    return jnp.sqrt(2.0 / x_max) * jnp.where(
+        x == 0,
+        n * jnp.pi / x_max,
+        jnp.sin(n * jnp.pi / x_max * x_nonzero) / x_nonzero,
+    )
+
+
+class BackflowEtaBessel(nn.Module):
+    nbasis: int
+    rcut: float
+    npoly_smooth: Optional[int] = 6
+    init_scale: Optional[float] = 0.1
+
+    @nn.compact
+    def __call__(self, r: float) -> float:
+        with jax.ensure_compile_time_eval():
+            nbasis = self.nbasis
+            rcut = self.rcut
+            envelope = polynomial_envelope(r, self.npoly_smooth, rcut)
+        coeffs = self.param('coeffs', nn.initializers.normal(self.init_scale), (nbasis,))
+        basis = bessel(r, nbasis, rcut)
+        return jnp.expand_dims(envelope, -1) * basis@coeffs
+
+
+class PairBackflow(nn.Module):
+    spins: Sequence[int]
+    cell: Array
+    backflow_eta: nn.Module
+    backflow_eta_a: Optional[nn.Module] = None
+
+    @nn.compact
+    def __call__(self, r):
+        n = r.shape[-2]
+        with jax.ensure_compile_time_eval():
+            latvec = self.cell
+            rs = heg_rs(latvec, n)
+            spins = self.spins
+            blkdiag_mask, offdiag_mask = block_diagonal_masks(spins, n, False)
+            eta_para = self.backflow_eta  # parallel spin
+            if len(spins) > 1:  # antiparallel spin, default to same as parallel
+              eta_anti = self.backflow_eta_a or eta_para
+        # displacements
+        _, d_hsin, dist = dist_features_pbc(r, latvec, frac_dist=False, keepdims=False)
+        r_by_rs = dist/rs
+        # !!!! inefficient construction of eta matrix
+        eta = eta_para(r_by_rs)*blkdiag_mask * (1-jnp.eye(n))
+        if len(self.spins) > 1:
+            eta = eta + eta_anti(r_by_rs)*offdiag_mask
+        dr = jnp.einsum('ij,ijl->jl', eta, -d_hsin)
+        return r + dr
+
+
+class IterativeBackflow(nn.Module):
+    spins: Sequence[int]
+    cell: Array
+    backflow_etas: list[nn.Module]
+    backflow_etas_a: Optional[list[nn.Module]] = None
+
+    @nn.compact
+    def __call__(self, r):
+        with jax.ensure_compile_time_eval():
+            spins = self.spins
+            eta_paras = self.backflow_etas  # parallel spin
+            if len(spins) > 1:  # antiparallel spin, default to same as parallel
+                eta_antis = self.backflow_etas_a or eta_paras
+            else:
+                eta_antis = [None]*len(eta_paras)
+        q = r
+        for ep, ea in zip(eta_paras, eta_antis):
+            q = PairBackflow(
+                spins=spins,
+                cell=self.cell,
+                backflow_eta=ep,
+                backflow_eta_a=ea,
+            )(q)
+        return q
