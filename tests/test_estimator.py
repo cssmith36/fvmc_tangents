@@ -42,11 +42,11 @@ def test_eval_local_shape(pbc):
 
     a = None
     x = make_test_x()
-    eloc, sign, logf = eval_local(a, x)
+    eloc, sign, logf, extras = eval_local(a, x)
     assert eloc.shape == sign.shape == logf.shape == tuple()
 
     bx = jnp.stack([x, x, x], 0) #batch dim has size 3
-    beloc, bsign, blogf = jax.vmap(eval_local, (None, 0))(a, bx)
+    beloc, bsign, blogf, bextras = jax.vmap(eval_local, (None, 0))(a, bx)
     assert beloc.shape == bsign.shape == blogf.shape == (3,)
 
 
@@ -61,12 +61,12 @@ def test_eval_local_full_shape(pbc):
 
     a = None
     x = make_test_x()
-    eloc, sign, logf = eval_local(a, (r,x))
+    eloc, sign, logf, extras = eval_local(a, (r,x))
     assert eloc.shape == sign.shape == logf.shape == tuple()
 
     br = jnp.stack([r, r, r], 0) #batch dim has size 3
     bx = jnp.stack([x, x, x], 0) #batch dim has size 3
-    beloc, bsign, blogf = jax.vmap(eval_local, (None, 0))(a, (br, bx))
+    beloc, bsign, blogf, bextras = jax.vmap(eval_local, (None, 0))(a, (br, bx))
     assert beloc.shape == bsign.shape == blogf.shape == (3,)
 
 
@@ -83,7 +83,7 @@ def test_eval_total(clipping, weighted, mini_batch):
     def eval_local(params, x):
         eloc = local_energy(x)
         sign, logf = model.apply(params, x)
-        return eloc, sign, logf
+        return eloc, sign, logf, {}
 
     a = 3.5
     x = make_test_x()

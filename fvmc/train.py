@@ -141,7 +141,10 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
     # make estimators
     loss_cfg = dict(loss_cfg) # so that we can pop
     ke_kwargs = loss_cfg.pop("ke_kwargs", {})
-    lclargs = dict(stop_gradient=True, ke_kwargs=ke_kwargs)
+    pe_kwargs = loss_cfg.pop("pe_kwargs", {})
+    extpots = system_cfg.get("external_potentials", {})
+    lclargs = dict(ke_kwargs=ke_kwargs, pe_kwargs=pe_kwargs,
+                   extpots=extpots, stop_gradient=True)
     local_fn = (build_eval_local_full(ansatz, elems, cell, **lclargs)
                 if fully_quantum else
                 build_eval_local_elec(ansatz, elems, nuclei, cell, **lclargs))

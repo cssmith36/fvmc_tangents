@@ -7,18 +7,8 @@ from jax import numpy as jnp
 
 from .ewaldsum import EwaldSum
 from .hamiltonian import calc_ke_elec, calc_ke_full, get_nuclei_mass, calc_pe
+from .moire import OneShell
 from .utils import PMAP_AXIS_NAME, PmapAxis, ith_output, exp_shifted
-
-
-def clip_around(a, target, half_range, stop_gradient=True):
-    if jnp.iscomplexobj(target):
-        return (clip_around(a.real, target.real, half_range, stop_gradient)
-                + 1j * clip_around(a.imag, target.imag, half_range, stop_gradient))
-    c_min = target - half_range
-    c_max = target + half_range
-    if stop_gradient:
-        c_max, c_min = map(lax.stop_gradient, (c_max, c_min))
-    return jnp.clip(a, c_min, c_max)
 
 
 def get_log_psi(model_apply, params, stop_gradient=False):
@@ -33,8 +23,23 @@ def get_log_psi(model_apply, params, stop_gradient=False):
     return log_psi
 
 
+def parse_extpots(extpots, **sysinfo):
+    """parse the extpots dict into a dict of functions"""
+    extpots = extpots or {}
+    parsed = {}
+    for name, ext in extpots.items():
+        if callable(ext):
+            parsed[name] = ext
+        elif name == 'moire':
+            parsed[name] = OneShell(sysinfo['cell'], **ext).calc_pe
+        else:
+            raise ValueError(f'Unknown external potential: {name}')
+    return parsed
+
+
 def build_eval_local_elec(model, elems, nuclei, cell=None, *,
-                          stop_gradient=True, ke_kwargs=None):
+                          ke_kwargs=None, pe_kwargs=None,
+                          extpots=None, stop_gradient=True):
     """create a function that evaluates local energy, sign and log abs of wavefunction.
 
     Args:
@@ -49,25 +54,35 @@ def build_eval_local_elec(model, elems, nuclei, cell=None, *,
         local energy, sign and log abs of wavefunctions on given parameters and configurations.
     """
 
-    calc_pe_adapt = EwaldSum(cell).calc_pe if cell is not None else calc_pe
     ke_kwargs = ke_kwargs or {}
+    ke_fn = partial(calc_ke_elec, **ke_kwargs)
+    pe_kwargs = pe_kwargs or {}
+    pe_fn = (EwaldSum(cell, **pe_kwargs).calc_pe
+             if cell is not None else partial(calc_pe, **pe_kwargs))
+    extpot_fns = parse_extpots(extpots, elems=elems, nuclei=nuclei, cell=cell)
 
     def eval_local(params, x):
         sign, logf = model.apply(params, x)
         log_psi_fn = get_log_psi(model.apply, params,
                                  stop_gradient=stop_gradient)
-        ke = calc_ke_elec(log_psi_fn, x, **ke_kwargs)
-        pe = calc_pe_adapt(elems, nuclei, x)
-        eloc = ke + pe
+        ene_comps = {
+            "e_kin": ke_fn(log_psi_fn, x),
+            "e_coul": pe_fn(elems, nuclei, x),
+            **{f"e_{name}": fn(x) for name, fn in extpot_fns.items()}
+        }
+        eloc = jax.tree_util.tree_reduce(jnp.add, ene_comps, 0.0)
         if stop_gradient:
+            ene_comps = jax.tree_map(lax.stop_gradient, ene_comps)
             eloc = lax.stop_gradient(eloc)
-        return eloc, sign, logf
+        extras = {**ene_comps} # for now only log energy components
+        return eloc, sign, logf, extras
 
     return eval_local
 
 
 def build_eval_local_full(model, elems, cell=None, *,
-                          stop_gradient=True, ke_kwargs=None):
+                          ke_kwargs=None, pe_kwargs=None,
+                          extpots=None, stop_gradient=True):
     """create a function that evaluates local energy, sign and log abs of full wavefunction.
 
     Args:
@@ -82,21 +97,30 @@ def build_eval_local_full(model, elems, cell=None, *,
         `conf` here is a tuple of (r, x) contains nuclei (r) and electron (x) positions.
     """
 
-    calc_pe_adapt = EwaldSum(cell).calc_pe if cell is not None else calc_pe
     mass = get_nuclei_mass(elems)
     ke_kwargs = ke_kwargs or {}
+    ke_fn = partial(calc_ke_full, **ke_kwargs)
+    pe_kwargs = pe_kwargs or {}
+    pe_fn = (EwaldSum(cell, **pe_kwargs).calc_pe
+             if cell is not None else partial(calc_pe, **pe_kwargs))
+    extpot_fns = parse_extpots(extpots, elems=elems, cell=cell)
 
     def eval_local(params, conf):
         r, x = conf
         sign, logf = model.apply(params, r, x)
         log_psi_fn = get_log_psi(model.apply, params,
                                  stop_gradient=stop_gradient)
-        ke = calc_ke_full(log_psi_fn, mass, r, x, **ke_kwargs)
-        pe = calc_pe_adapt(elems, r, x)
-        eloc = ke + pe
+        ene_comps = {
+            "e_kin": ke_fn(log_psi_fn, mass, r, x),
+            "e_coul": pe_fn(elems, r, x),
+            **{f"e_{name}": fn(r, x) for name, fn in extpot_fns.items()}
+        }
+        eloc = jax.tree_util.tree_reduce(jnp.add, ene_comps, 0.0)
         if stop_gradient:
+            ene_comps = jax.tree_map(lax.stop_gradient, ene_comps)
             eloc = lax.stop_gradient(eloc)
-        return eloc, sign, logf
+        extras = {**ene_comps} # for now only log energy components
+        return eloc, sign, logf, extras
 
     return eval_local
 
@@ -124,6 +148,17 @@ def get_batched_local(eval_local_fn, mini_batch=None,
             res = jax.tree_map(lambda *a: jnp.concatenate(a, axis=0), *res_list)
         return res
     return batch_local
+
+
+def clip_around(a, target, half_range, stop_gradient=True):
+    if jnp.iscomplexobj(target):
+        return (clip_around(a.real, target.real, half_range, stop_gradient)
+                + 1j * clip_around(a.imag, target.imag, half_range, stop_gradient))
+    c_min = target - half_range
+    c_max = target + half_range
+    if stop_gradient:
+        c_max, c_min = map(lax.stop_gradient, (c_max, c_min))
+    return jnp.clip(a, c_min, c_max)
 
 
 def build_eval_total(eval_local_fn, energy_clipping=None,
@@ -189,7 +224,7 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
         """
         # data is a tuple of sample and log of sampling weight
         conf, _ = data
-        eloc, sign, logf = batch_local(params, conf)
+        eloc, sign, logf, extras = batch_local(params, conf)
         if jnp.iscomplexobj(sign):
             logf += jnp.log(sign)
 
@@ -200,6 +235,8 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
         # form aux data dict, divide tot_w for correct gradient
         aux = dict(e_tot = etot.real, var_e = var_e, std_e = jnp.sqrt(var_e),
                    nans = jnp.isnan(eloc).sum())
+        for key, val in extras.items():
+            aux[key] = paxis.all_nanmean(val).real
 
         # clipping the local energy (for making the loss)
         eclip = eloc
@@ -271,7 +308,7 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
         # data is a tuple of sample and log of sampling weight
         conf, logsw = data
         logsw = lax.stop_gradient(logsw)
-        eloc, sign, logf = batch_local(params, conf)
+        eloc, sign, logf, extras = batch_local(params, conf)
         if jnp.iscomplexobj(sign):
             logf += jnp.log(sign)
 
@@ -287,6 +324,8 @@ def build_eval_total_weighted(eval_local_fn, energy_clipping=None,
             e_tot = etot.real, var_e = var_e, std_e = jnp.sqrt(var_e),
             nans = jnp.isnan(eloc).sum(), _log_shift = lshift
         )
+        for key, val in extras.items():
+            aux[key] = paxis.all_nanmean(val).real
 
         # clipping the local energy (for making the loss)
         eclip = eloc
