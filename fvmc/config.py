@@ -10,7 +10,7 @@ def default() -> ConfigDict:
 
         "multi_device": False,
 
-        "fully_quantum": False,
+        "quantum_nuclei": False,
 
         "restart": {
             "params": None,

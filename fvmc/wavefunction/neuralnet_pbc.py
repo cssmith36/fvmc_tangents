@@ -6,9 +6,9 @@ import numpy as onp
 from flax import linen as nn
 from jax import numpy as jnp
 
-from ..utils import (Array, _t_real, adaptive_residual, build_mlp,
-                     collect_elems, displace_matrix, fix_init, gen_kidx,
-                     log_linear_exp, parse_activation, wrap_complex_linear)
+from ..utils import (Array, ElecConf, NuclConf, _t_real, build_mlp,
+                     collect_elems, displace_matrix, ensure_no_spin, gen_kidx,
+                     log_linear_exp, wrap_complex_linear)
 from .base import FullWfn
 from .neuralnet import ElectronCusp, FermiLayer
 
@@ -199,7 +199,8 @@ class FermiNetPbc(FullWfn):
     nuclei_module: Optional[FullWfn] = None
 
     @nn.compact
-    def __call__(self, r: Array, x: Array) -> Array:
+    def __call__(self, r: NuclConf, x: ElecConf) -> Array:
+        x = ensure_no_spin(x)
         n_elec = x.shape[-2]
         n_nucl = r.shape[-2]
         _, elem_sec = collect_elems(self.elems)

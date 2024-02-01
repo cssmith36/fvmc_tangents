@@ -18,6 +18,11 @@ from ml_collections import ConfigDict
 
 PyTree = Any
 
+NuclConf = NuclCoord = Array
+ElecCoord = ElecSpin = Array
+ElecConf = Union[ElecCoord, Tuple[ElecCoord, ElecSpin]]
+FullConf = Tuple[NuclConf, ElecConf]
+
 _t_real = float
 _t_cplx = complex
 
@@ -386,7 +391,7 @@ def dict_to_cfg(cdict, **kwargs):
     return cfg
 
 
-def parse_spin(n_el, spin):
+def parse_spin_num(n_el, spin):
     if spin is None:
         n_up, n_dn = n_el//2, n_el - n_el//2
     else:
@@ -394,6 +399,25 @@ def parse_spin(n_el, spin):
         n_dn = n_up - spin
     assert n_up + n_dn == n_el
     return n_up, n_dn
+
+
+def split_spin(x: ElecConf) -> Tuple[ElecCoord, Optional[ElecSpin]]:
+    if isinstance(x, tuple):
+        return x
+    else: # no spin info, return None for spin
+        return x, None
+
+def attach_spin(x: ElecCoord, s: Optional[ElecSpin]) -> ElecConf:
+    if s is None:
+        return x
+    else:
+        return x, s
+
+def ensure_no_spin(x: ElecConf) -> ElecCoord:
+    x, s = split_spin(x)
+    if s is not None:
+        raise ValueError("spin information is not allowed")
+    return x
 
 
 def collect_elems(elems):

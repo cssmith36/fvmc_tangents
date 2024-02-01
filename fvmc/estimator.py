@@ -8,7 +8,7 @@ from jax import numpy as jnp
 from .ewaldsum import EwaldSum
 from .hamiltonian import calc_ke_elec, calc_ke_full, get_nuclei_mass, calc_pe
 from .moire import OneShell
-from .utils import PMAP_AXIS_NAME, PmapAxis, ith_output, exp_shifted
+from .utils import ElecConf, FullConf, PMAP_AXIS_NAME, PmapAxis, exp_shifted
 
 
 def get_log_psi(model_apply, params, stop_gradient=False):
@@ -61,7 +61,7 @@ def build_eval_local_elec(model, elems, nuclei, cell=None, *,
              if cell is not None else partial(calc_pe, **pe_kwargs))
     extpot_fns = parse_extpots(extpots, elems=elems, nuclei=nuclei, cell=cell)
 
-    def eval_local(params, x):
+    def eval_local(params, x: ElecConf):
         sign, logf = model.apply(params, x)
         log_psi_fn = get_log_psi(model.apply, params,
                                  stop_gradient=stop_gradient)
@@ -105,7 +105,7 @@ def build_eval_local_full(model, elems, cell=None, *,
              if cell is not None else partial(calc_pe, **pe_kwargs))
     extpot_fns = parse_extpots(extpots, elems=elems, cell=cell)
 
-    def eval_local(params, conf):
+    def eval_local(params, conf: FullConf):
         r, x = conf
         sign, logf = model.apply(params, r, x)
         log_psi_fn = get_log_psi(model.apply, params,

@@ -4,6 +4,7 @@ from jax import numpy as jnp
 from jax.flatten_util import ravel_pytree
 
 from .utils import pdist, cdist, adaptive_grad
+from .utils import split_spin, attach_spin
 
 
 def calc_coulomb(charge, pos):
@@ -26,6 +27,7 @@ def calc_coulomb_2(charge_a, pos_a, charge_b, pos_b):
 def calc_pe(elems, r, x):
     # r is nuclei position
     # x is electron positions
+    x, _ = split_spin(x) # Coulomb is spin independent
     el_el = calc_coulomb(-1, x)
     el_ion = calc_coulomb_2(-1, x, elems, r)
     ion_ion = calc_coulomb(elems, r)
@@ -85,34 +87,26 @@ def laplacian_over_f(log_f, scale=None, forward_mode=False, partition_size=1):
 def calc_ke_elec(log_psi, x, *, forward_mode=False, partition_size=1):
     # calc -0.5 * (\nable^2 \psi) / \psi
     # handle batch of x automatically
+    x, s = split_spin(x)
     lapl_fn = laplacian_over_f(
-        log_psi,
+        lambda x: log_psi(attach_spin(x, s)),
         scale=None,
         forward_mode=forward_mode,
         partition_size=partition_size)
-    if x.ndim == 3:
-        lapl_fn = jax.vmap(lapl_fn)
-    elif x.ndim != 2:
-        raise ValueError(f"only support x with ndim equals 2 or 3, get {x.ndim}")
     return -0.5 * lapl_fn(x)
 
 
 def calc_ke_full(log_psi, mass, r, x, *, forward_mode=False, partition_size=1):
     # calc -0.5 * (\nable^2 \psi) / \psi
     # handle batch of r, x automatically
+    x, s = split_spin(x)
     mass = jnp.reshape(mass, -1)
     minv = (jnp.repeat(1/mass, r.shape[-1]), jnp.ones(x.shape[-1] * x.shape[-2]))
     lapl_fn = laplacian_over_f(
-        log_psi,
+        lambda r, x: log_psi(r, attach_spin(x, s)),
         scale=minv,
         forward_mode=forward_mode,
         partition_size=partition_size)
-    assert r.ndim == x.ndim, \
-        f"proton and electron should have same ndim, got {r.ndim} and {x.ndim}"
-    if x.ndim == 3:
-        lapl_fn = jax.vmap(lapl_fn)
-    elif x.ndim != 2:
-        raise ValueError(f"only support input with ndim equals 2 or 3, get {x.ndim}")
     return -0.5 * lapl_fn(r, x)
 
 

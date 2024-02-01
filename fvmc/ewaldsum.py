@@ -29,7 +29,7 @@ import jax
 import jax.numpy as jnp
 
 # from . import LOGGER
-from .utils import displace_matrix
+from .utils import displace_matrix, split_spin
 
 
 class EwaldSum:
@@ -106,6 +106,7 @@ class EwaldSum:
     def calc_pe(self, elems, r, x):
         """Warpped interface for potential energy from nuclei and electrons"""
         assert elems.shape[0] == r.shape[0]
+        x, _ = split_spin(x) # Coulomb is spin independent
         assert elems.ndim == 1 and r.ndim == x.ndim == 2
         charge = jnp.concatenate([elems, -jnp.ones(x.shape[0])], axis=0)
         pos = jnp.concatenate([r, x], axis=0)

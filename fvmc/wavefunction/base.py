@@ -7,7 +7,7 @@ import jax
 from flax import linen as nn
 from jax import numpy as jnp
 
-from ..utils import Array
+from ..utils import ElecConf, NuclConf, Array
 
 
 def model_wrapper(model: nn.Module,
@@ -64,9 +64,9 @@ class FixNuclei(ElecWfn):
     Think it as a partial warpper that works on nn.Module
     """
     model: FullWfn
-    nuclei: Array
+    nuclei: NuclConf
 
-    def __call__(self, x: Array) -> Tuple[Array, Array]:
+    def __call__(self, x: ElecConf) -> Tuple[Array, Array]:
         return self.model(r=self.nuclei, x=x)
 
 
@@ -82,7 +82,7 @@ class ProductModel(FullWfn):
     submodels: Sequence[nn.Module]
 
     @nn.compact
-    def __call__(self, r:Array, x: Array) -> Tuple[Array, Array]:
+    def __call__(self, r:NuclConf, x: ElecConf) -> Tuple[Array, Array]:
         sign = 1.
         logf = 0.
         with_sign = True # False will make the sign optional

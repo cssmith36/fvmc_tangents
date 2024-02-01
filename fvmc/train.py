@@ -95,7 +95,7 @@ def parse_system_cfg(system_cfg):
 
 
 def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
-            fully_quantum=False, key=None, restart_cfg=None, multi_device=False):
+            quantum_nuclei=False, key=None, restart_cfg=None, multi_device=False):
     """prepare system, ansatz, sampler, optimizer and training state"""
 
     # handle multi device settings
@@ -118,8 +118,8 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
     else:
         ansatz_cfg = ConfigDict(ansatz_cfg)
         # ansatz = build_jastrow_slater(elems, n_elec, nuclei,
-        #     dynamic_nuclei=fully_quantum, **ansatz_cfg)
-        if fully_quantum:
+        #     dynamic_nuclei=quantum_nuclei, **ansatz_cfg)
+        if quantum_nuclei:
             if cell is None:
                 elec_ansatz = FermiNet(elems=elems, spins=n_elec, **ansatz_cfg)
                 nuclei_ansatz = NucleiGaussianSlater(nuclei, 0.1)
@@ -146,7 +146,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
     lclargs = dict(ke_kwargs=ke_kwargs, pe_kwargs=pe_kwargs,
                    extpots=extpots, stop_gradient=True)
     local_fn = (build_eval_local_full(ansatz, elems, cell, **lclargs)
-                if fully_quantum else
+                if quantum_nuclei else
                 build_eval_local_elec(ansatz, elems, nuclei, cell, **lclargs))
     loss_fn = build_eval_total(local_fn,
         pmap_axis_name=PAXIS.name, **loss_cfg)
@@ -160,7 +160,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
     n_multistep = -(-n_sample // n_chain)
     n_batch = n_chain // n_device
     conf_init_fn = sample_cfg.get("conf_init_fn", build_conf_init_fn(
-        elems, nuclei, sum(n_elec), with_r=fully_quantum))
+        elems, nuclei, sum(n_elec), with_r=quantum_nuclei))
     raw_sampler = build_sampler(
         log_prob_fn,
         conf_init_fn,
@@ -217,7 +217,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
         else:
             key, parkey, skey = jax.random.split(key, 3) # init use single key
             fake_input = conf_init_fn(skey)
-            params = (ansatz.init(parkey, *fake_input) if fully_quantum
+            params = (ansatz.init(parkey, *fake_input) if quantum_nuclei
                       else ansatz.init(parkey, fake_input))
         if multi_device:
             params = kfac_jax.utils.replicate_all_local_devices(params)
@@ -386,7 +386,7 @@ def main(cfg):
     key = jax.random.PRNGKey(cfg.seed) if 'seed' in cfg else None
     system, ansatz, loss_fn, sampler, optimizer, train_state \
         = prepare(cfg.system, cfg.ansatz, cfg.sample, cfg.loss, cfg.optimize,
-                  cfg.fully_quantum, key, cfg.restart, cfg.multi_device)
+                  cfg.quantum_nuclei, key, cfg.restart, cfg.multi_device)
 
     training_step = build_training_step(sampler, optimizer)
     train_state = run(training_step, train_state, cfg.optimize.iterations, cfg.log)

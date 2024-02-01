@@ -5,7 +5,8 @@ import jax
 from flax import linen as nn
 from jax import numpy as jnp
 
-from ..utils import Array, _t_real, build_mlp, parse_activation
+from ..utils import (Array, ElecConf, _t_real,
+                     build_mlp, ensure_no_spin, parse_activation)
 from .base import ElecWfn
 from .neuralnet_pbc import raw_features_pbc
 
@@ -23,8 +24,9 @@ class NeuralBackflow(nn.Module):
     kernel_init: Callable = nn.linear.default_kernel_init
 
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, x: ElecConf) -> Tuple[ElecConf, Tuple[float, float]]:
         # set up constants
+        x = ensure_no_spin(x)
         n_elec, n_dim = x.shape
         assert sum(self.spins) == n_elec
         actv_fn = parse_activation(self.activation)

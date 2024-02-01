@@ -5,8 +5,8 @@ import jax
 from flax import linen as nn
 from jax import numpy as jnp
 
-from ..utils import (Array, _t_real, build_mlp, cdist, displace_matrix,
-                    fix_init, pdist)
+from ..utils import (Array, ElecConf, NuclConf, _t_real, ensure_no_spin,
+                     build_mlp, cdist, displace_matrix, fix_init, pdist)
 from .base import FullWfn, ProductModel
 
 
@@ -26,8 +26,9 @@ class SimpleJastrow(nn.Module):
     elems: Array
 
     @nn.compact
-    def __call__(self, r: Array, x: Array) -> Array:
+    def __call__(self, r: NuclConf, x: ElecConf) -> Array:
         # calculate initial scale, so that it returns 0 if all electrons are on nuclei
+        x = ensure_no_spin(x)
         cmat = jnp.expand_dims(self.elems, -1) * jnp.expand_dims(self.elems, -2)
         scale = 0.5 * jnp.sum(pdist(r) * cmat)
         # make z and q parameters
@@ -54,8 +55,9 @@ class SimpleOrbital(nn.Module):
     activation: str = "gelu"
 
     @nn.compact
-    def __call__(self, r: Array, x: Array) -> Array:
+    def __call__(self, r: NuclConf, x: ElecConf) -> Array:
         # n_el = x.shape[-2]
+        x = ensure_no_spin(x)
         n_dim = x.shape[-1]
         n_ion = r.shape[-2]
         n_feature = n_ion * (n_dim + 1)
@@ -85,7 +87,8 @@ class SimpleSlater(FullWfn):
     orbital_args: dict = _field(default_factory=dict)
 
     @nn.compact
-    def __call__(self, r: Array, x: Array) -> Tuple[Array, Array]:
+    def __call__(self, r: NuclConf, x: ElecConf) -> Tuple[Array, Array]:
+        x = ensure_no_spin(x)
         n_el = x.shape[-2]
         n_up, n_dn = self.spins
         assert n_up + n_dn == n_el
@@ -132,7 +135,7 @@ class NucleiGaussian(FullWfn):
     init_sigma: Array
 
     @nn.compact
-    def __call__(self, r: Array, x: Array) -> Tuple[Array, Array]:
+    def __call__(self, r: NuclConf, x: ElecConf) -> Tuple[Array, Array]:
         del x
         r0 = self.param("r0", fix_init, self.init_r0, _t_real)
         sigma = self.param("sigma", fix_init,
@@ -150,7 +153,7 @@ class NucleiGaussianSlater(FullWfn):
     init_sigma: Array
 
     @nn.compact
-    def __call__(self, r: Array, x: Array) -> Tuple[Array, Array]:
+    def __call__(self, r: NuclConf, x: ElecConf) -> Tuple[Array, Array]:
         del x
         # r0: [n_nucl, 3], sigma: [n_nucl, 1]
         r0 = self.param("r0", fix_init, self.init_r0, _t_real)
@@ -172,7 +175,7 @@ class NucleiGaussianSlaterPbc(FullWfn):
     init_sigma: Array
 
     @nn.compact
-    def __call__(self, r: Array, x: Array) -> Tuple[Array, Array]:
+    def __call__(self, r: NuclConf, x: ElecConf) -> Tuple[Array, Array]:
         del x
         # r0: [n_nucl, 3], sigma: [n_nucl, 1]
         r0 = self.param("r0", fix_init, self.init_r0, _t_real)

@@ -5,7 +5,7 @@ import pytest
 from jax import numpy as jnp
 
 from fvmc.wavefunction.neuralnet_pbc import FermiNetPbc, raw_features_pbc
-from fvmc.utils import parse_spin
+from fvmc.utils import parse_spin_num
 from .test_naive import make_collapse_conf
 
 
@@ -55,7 +55,7 @@ def model_data(request):
     x = x + jax.random.normal(_key0, x.shape)
     elems = jnp.sort(elems)
     n_el = x.shape[0]
-    spins = parse_spin(n_el, None)
+    spins = parse_spin_num(n_el, None)
     model = FermiNetPbc(elems=elems, spins=spins, cell=cell, **request.param)
     params = model.init(_key0, r, x)
     return model, params, r, x

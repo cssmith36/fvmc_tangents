@@ -11,7 +11,7 @@ from optax import bias_correction, update_moment
 
 from .utils import (PMAP_AXIS_NAME, Array, ArrayTree, PmapAxis, PyTree,
                     adaptive_split, build_moving_avg, clip_gradient,
-                    parse_spin, ravel_shape, tree_where)
+                    parse_spin_num, ravel_shape, tree_where)
 from .utils import log_cosh, sample_genlogistic # for relavistic hmc
 
 KeyArray = Array
@@ -112,7 +112,7 @@ def build_conf_init_fn(elems, nuclei, n_elec,
     n_elec = int(sum(n_elec)) if not isinstance(n_elec, int) else n_elec
     if elems.sum() != n_elec: # put extra charge in first atoms
         elems = elems.at[0].add(n_elec - elems.sum())
-    elec_list = [parse_spin(el, el%2 * (-1)**ii) for ii, el in enumerate(elems)]
+    elec_list = [parse_spin_num(el, el%2 * (-1)**ii) for ii, el in enumerate(elems)]
 
     def init_fn(key):
         xa, xb = [], []

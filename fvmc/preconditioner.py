@@ -74,7 +74,7 @@ def scale_by_fisher_inverse(
                 x_old=jnp.zeros_like(ravel_pytree(params)[0]), mix=0.)
             if solver.lower() not in ("direct", "qr", "svd") else None)
         prox_grads = (jnp.zeros_like(ravel_pytree(params)[0])
-                          if proximal is not None else None)
+                      if proximal is not None else None)
         return FisherPrecondState(count=0, solver_state=solver_state,
                                   prox_grads=prox_grads)
 

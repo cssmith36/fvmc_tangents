@@ -30,7 +30,7 @@ from jax import lax
 from jax import numpy as jnp
 
 from .ewaldsum import gen_pbc_disp_fn, gen_positive_gpoints
-from .utils import Array, displace_matrix, parse_spin, pdist
+from .utils import Array, displace_matrix, parse_spin_num, pdist
 
 
 def read_meta(fmeta: str) -> dict:
@@ -51,7 +51,7 @@ def read_meta(fmeta: str) -> dict:
     meta['system']['nelec'] = nelec
     #   spins
     spin = meta['system']['spin']
-    spins = parse_spin(nelec, spin)
+    spins = parse_spin_num(nelec, spin)
     #   !!!! HACK add following to parse_spin?
     for i, ns in enumerate(spins):
       if ns <= 0:

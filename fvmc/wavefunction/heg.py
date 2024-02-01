@@ -1,14 +1,14 @@
 import functools
 from dataclasses import field as _field
-from typing import Optional, Sequence, Tuple, Union, Callable
+from typing import Callable, Optional, Sequence, Tuple, Union
 
 import jax
 import numpy as onp
 from flax import linen as nn
 from jax import numpy as jnp
 
-from ..utils import (Array, _t_real, displace_matrix, fix_init, gen_kidx,
-                     log_linear_exp)
+from ..utils import (Array, ElecConf, _t_real, ensure_no_spin,
+                     displace_matrix, fix_init, gen_kidx, log_linear_exp)
 from .base import ElecWfn
 from .neuralnet_pbc import dist_features_pbc
 
@@ -29,7 +29,7 @@ class ElecProductModel(ElecWfn):
     apply_backflow: Union[bool, Sequence[bool]] = True
 
     @nn.compact
-    def __call__(self, x: Array) -> Tuple[Array, Array]:
+    def __call__(self, x: ElecConf) -> Tuple[Array, Array]:
         apply_backflow = (self.apply_backflow
                           if not isinstance(self.apply_backflow, bool)
                           else [self.apply_backflow] * len(self.submodels))
@@ -63,7 +63,8 @@ class PlanewaveSlater(ElecWfn):
     init_scale: float = 1e-2
 
     @nn.compact
-    def __call__(self, x: Array) -> Tuple[Array, Array]:
+    def __call__(self, x: ElecConf) -> Tuple[Array, Array]:
+        x = ensure_no_spin(x)
         kwargs = dict(
             spins=self.spins, cell=self.cell, n_k=self.n_k, twist=self.twist,
             close_shell=self.close_shell, spin_symmetry=self.spin_symmetry,
@@ -149,7 +150,8 @@ class PairJastrowCCK(ElecWfn):
     init_jd: float = 1./0.045
 
     @nn.compact
-    def __call__(self, x: Array) -> Tuple[Array, Array]:
+    def __call__(self, x: ElecConf) -> Tuple[Array, Array]:
+        x = ensure_no_spin(x)
         # preparation constants
         with jax.ensure_compile_time_eval():
             n_elec, ndim = x.shape
@@ -283,8 +285,9 @@ class PairBackflow(nn.Module):
     backflow_eta_a: Optional[nn.Module] = None
 
     @nn.compact
-    def __call__(self, r):
-        n = r.shape[-2]
+    def __call__(self, x: ElecConf) -> ElecConf:
+        x = ensure_no_spin(x)
+        n = x.shape[-2]
         with jax.ensure_compile_time_eval():
             latvec = self.cell
             rs = heg_rs(latvec, n)
@@ -294,14 +297,14 @@ class PairBackflow(nn.Module):
             if len(spins) > 1:  # antiparallel spin, default to same as parallel
               eta_anti = self.backflow_eta_a or eta_para
         # displacements
-        _, d_hsin, dist = dist_features_pbc(r, latvec, frac_dist=False, keepdims=False)
-        r_by_rs = dist/rs
+        _, d_hsin, dist = dist_features_pbc(x, latvec, frac_dist=False, keepdims=False)
+        x_by_rs = dist/rs
         # !!!! inefficient construction of eta matrix
-        eta = eta_para(r_by_rs)*blkdiag_mask * (1-jnp.eye(n))
+        eta = eta_para(x_by_rs)*blkdiag_mask * (1-jnp.eye(n))
         if len(self.spins) > 1:
-            eta = eta + eta_anti(r_by_rs)*offdiag_mask
+            eta = eta + eta_anti(x_by_rs)*offdiag_mask
         dr = jnp.einsum('ij,ijl->jl', eta, -d_hsin)
-        return r + dr
+        return x + dr
 
 
 class IterativeBackflow(nn.Module):
@@ -311,7 +314,8 @@ class IterativeBackflow(nn.Module):
     backflow_etas_a: Optional[list[nn.Module]] = None
 
     @nn.compact
-    def __call__(self, r):
+    def __call__(self, x: ElecConf) -> ElecConf:
+        x = ensure_no_spin(x)
         with jax.ensure_compile_time_eval():
             spins = self.spins
             eta_paras = self.backflow_etas  # parallel spin
@@ -319,7 +323,7 @@ class IterativeBackflow(nn.Module):
                 eta_antis = self.backflow_etas_a or eta_paras
             else:
                 eta_antis = [None]*len(eta_paras)
-        q = r
+        q = x
         for ep, ea in zip(eta_paras, eta_antis):
             q = PairBackflow(
                 spins=spins,

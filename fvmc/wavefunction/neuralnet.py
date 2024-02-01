@@ -1,15 +1,15 @@
 import dataclasses
-from typing import Sequence, Tuple, Callable
 from functools import partial
+from typing import Callable, Sequence, Tuple
 
 import jax
 import numpy as onp
 from flax import linen as nn
 from jax import numpy as jnp
 
-from ..utils import (Array, _t_real, adaptive_residual, build_mlp,
-                    collect_elems, displace_matrix, fix_init, log_linear_exp,
-                    parse_activation)
+from ..utils import (Array, ElecConf, NuclConf, _t_real, adaptive_residual,
+                     build_mlp, collect_elems, displace_matrix, ensure_no_spin,
+                     fix_init, log_linear_exp, parse_activation)
 from .base import FullWfn
 
 # for all functions, we use the following convention:
@@ -262,7 +262,8 @@ class FermiNet(FullWfn):
     jastrow_layers: int = 3
 
     @nn.compact
-    def __call__(self, r: Array, x: Array) -> Array:
+    def __call__(self, r: NuclConf, x: ElecConf) -> Array:
+        x = ensure_no_spin(x)
         n_elec = x.shape[-2]
         n_nucl = r.shape[-2]
         _, elem_sec = collect_elems(self.elems)
@@ -292,7 +293,6 @@ class FermiNet(FullWfn):
                 **flargs
             )
             h1, h2 = flayer(h1, h2)
-
 
         orbital_map = OrbitalMap((n_up, n_dn), self.determinants, self.full_det,
                                  self.fermilayer.get("spin_symmetry", False))
