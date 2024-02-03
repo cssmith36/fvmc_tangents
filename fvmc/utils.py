@@ -234,6 +234,46 @@ def gen_kidx(n_d, n_k, close_shell=True):
         return kall[sidx[shell_select]]
 
 
+def gen_kvecs(recvec: Array, mesh: Sequence[int]) -> Array:
+    """Regular grid centered around 0"""
+    ndim = len(recvec)
+    assert len(mesh) == ndim
+    spaces = [onp.fft.fftfreq(nx)*nx for nx in mesh]
+    kidx = onp.stack(
+        onp.meshgrid(*spaces, indexing='ij'), axis=-1
+    ).reshape(-1, ndim)
+    return kidx @ recvec
+
+
+def guess_kmesh(recvec: Array, kcut: float) -> Sequence[int]:
+    ndim = len(recvec)
+    # first shell of neighbors in reciprocal space
+    pts = gen_kvecs(jnp.eye(ndim), (3,)*ndim)
+    kpts = pts @ recvec
+    # determine maximum number of shells needed to reach kcut
+    kmags = jnp.linalg.norm(kpts[1:], axis=-1)
+    nmax = onp.ceil(kcut/kmags).astype(int).max()
+    kmesh = (2*nmax,)*ndim
+    return kmesh
+
+
+def gen_ksphere(
+    cell: Array, kcut: float,
+    twist: Optional[Array] = None,
+    margin: Optional[float] = 0.2,
+) -> Array:
+    recvec = 2*jnp.pi*jnp.linalg.inv(cell).T
+    qvec = jnp.zeros(len(cell))
+    if twist is not None:
+        twist = (jnp.asarray(twist) + 0.5) % 1. - 0.5
+        qvec = twist @ recvec
+    mesh = guess_kmesh(recvec, (1+margin)*kcut)
+    kvecs = qvec + gen_kvecs(recvec, mesh)
+    kmags = jnp.linalg.norm(kvecs, axis=-1)
+    sel = kmags < kcut
+    return kvecs[sel]
+
+
 def build_moving_avg(decay=0.99, early_growth=True):
     def moving_avg(acc, new, i=None):
         if early_growth:

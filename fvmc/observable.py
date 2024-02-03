@@ -30,7 +30,9 @@ from jax import lax
 from jax import numpy as jnp
 
 from .ewaldsum import gen_pbc_disp_fn, gen_positive_gpoints
+from .wavefunction.base import log_psi_from_model
 from .utils import Array, displace_matrix, parse_spin_num, pdist
+from .utils import ArrayTree, gen_ksphere
 
 
 def read_meta(fmeta: str) -> dict:
@@ -72,7 +74,7 @@ def read_traj(ftraj : str, ndim : int) -> Array:
     """
     data = np.load(ftraj)
     niter, nsample, nelec_ndim = data.shape
-    nelec = nelec_ndim//ndim
+    nelec = nelec_ndim // ndim
     if nelec*ndim != nelec_ndim:
         msg = ('read_traj failed to infer dimensions: '
               f'Ne={nelec} ndim={ndim} but Ne*ndim={nelec_ndim}')
@@ -103,9 +105,9 @@ def calc_obs(traj: Array, calc_func: Callable, *args, **kwargs):
     for y1 in outputs:
         nsamp = y1.shape[0]
         ym = jnp.mean(y1, axis=0)
-        y2 = jnp.mean(y1*y1, axis=0)
+        y2 = jnp.mean(y1 * y1, axis=0)
         # !!!! HACK: assume no autocorrelation
-        ye = (y2-ym*ym)**0.5/nsamp**0.5
+        ye = (y2 - ym * ym)**0.5 / nsamp**0.5
         yml.append(ym)
         yel.append(ye)
     return meta, jnp.asarray(yml), jnp.asarray(yel)
@@ -153,7 +155,7 @@ def calc_dens(walker: Array, cell: Array, spins: Tuple[int], bins: Tuple[int]):
     for ws in walker_split:
         fracs = jnp.dot(ws.reshape(-1, ndim), invvec) % 1
         hist, edges = jnp.histogramdd(fracs, bins=bins, range=[(0, 1)]*ndim)
-        res.append(hist*nnr/nsample)
+        res.append(hist * nnr / nsample)
     return res, dict(edges=edges)
 
 
@@ -161,8 +163,8 @@ def calc_dens(walker: Array, cell: Array, spins: Tuple[int], bins: Tuple[int]):
 
 def select_kvecs(recvec: Array, kcut: float, g_max: int=200) -> Array:
     kvecs = gen_positive_gpoints(recvec, g_max)
-    k2 = jnp.sum(kvecs*kvecs, axis=-1)
-    sel = k2 < kcut*kcut
+    k2 = jnp.sum(kvecs * kvecs, axis=-1)
+    sel = k2 < (kcut * kcut)
     return kvecs[sel]
 
 
@@ -179,13 +181,13 @@ def gen_calc_sofk(cell: Array, spins: Tuple[int], kcut: float) -> Callable:
         rhoks = []
         for ii in range(nspin):
             kr = jnp.tensordot(kvecs, walker_split[ii], (-1, -1))
-            rhok = jnp.sum(jnp.exp(1j*kr), axis=-1)
+            rhok = jnp.sum(jnp.exp(1j * kr), axis=-1)
             rhoks.append(rhok)
             rkm = rhok.mean(axis=-1)
             res.append(rkm)
         for ii, rhoki in enumerate(rhoks):
             for _, rhokj in enumerate(rhoks[ii:], start=ii):
-                sofk = (rhoki*rhokj.conj())  # symmetrize i j?
+                sofk = (rhoki * rhokj.conj())  # symmetrize i j?
                 res.append(sofk.mean(axis=-1))
         return res, dict(kvecs=kvecs)
 
@@ -204,7 +206,7 @@ def gen_calc_pair_hist(cell: Array, spins: Tuple[int], bins: Tuple[int]) -> Call
         disp = disp @ invvec
         nsample = len(disp)
         hists, edges = histogram_spin_blocks(disp, bins, spins, (-0.5, 0.5))
-        res = [h/nsample for h in hists]
+        res = [h / nsample for h in hists]
         return res, dict(edges=edges)
 
     return calc_pair_hist
@@ -218,7 +220,7 @@ def gen_calc_gofr(cell: Array, spins: Tuple[int], bins: int, rcut: float) -> Cal
         for jj, nj in enumerate(spins[ii:], start=ii):
             n2 = None if ii == jj else nj
             gr_norm = gofr_norm(cell, edges, ni, n2=n2)
-            norms.append(gr_norm/2)  # !!!! HACK: why /2?
+            norms.append(gr_norm / 2)  # !!!! HACK: why /2?
 
     @jax.jit
     def calc_gofr(walker: Array):
@@ -228,12 +230,12 @@ def gen_calc_gofr(cell: Array, spins: Tuple[int], bins: int, rcut: float) -> Cal
         # count
         hists, edges = histogram_spin_blocks(dist, bins, spins, (0, 1))
         # grid
-        e = jnp.asarray(edges[0])*rcut
-        r = 0.5*(e[1:]+e[:-1])
+        e = jnp.asarray(edges[0]) * rcut
+        r = 0.5 * (e[1:] + e[:-1])
         # normalize
         res = []
         for hist, norm in zip(hists, norms):
-          gr = hist.at[0].set(0)*norm/nsample
+          gr = hist.at[0].set(0) * norm / nsample
           res.append(gr)
         return res, dict(r=r)
 
@@ -244,13 +246,13 @@ def gofr_norm(cell: Array, bin_edges: Array, n1: int, n2: int=None) -> Array:
     n2 = n2 if n2 else n1-1
     ndim, ndim = cell.shape
     # calculate volume of bins
-    vnorm = np.diff(2*(ndim-1)/ndim*np.pi*bin_edges**ndim)
+    vnorm = np.diff(2 * (ndim-1) / ndim * np.pi * bin_edges**ndim)
     # calculate density normalization
-    npair = n1*n2/2
+    npair = n1 * n2 / 2
     volume = np.abs(np.linalg.det(cell))
-    rho = npair/volume
+    rho = npair / volume
     # assemble the norm vector
-    gr_norm = 1./(rho*vnorm)
+    gr_norm = 1. / (rho * vnorm)
     return gr_norm
 
 
@@ -274,3 +276,49 @@ def histogram_spin_blocks(dis: list[list[Array]], bins: Tuple[int],
             hist, edges = jnp.histogramdd(dblock, bins=bins, range=[xlim]*ndim)
             res.append(hist)
     return res, edges
+
+
+# =============================== nofk ==============================
+
+def gen_calc_nofk(
+    cell: Array, kcut: float, twist: Array, n_elec: int,
+    ansatz, params: ArrayTree, key: Array, n_samp: int = 32,
+) -> Callable:
+    n_dim = cell.shape[-1]
+    # mask to make new snapshots, each with one electron moved
+    single_particle_mask = jnp.zeros([n_elec, n_elec, n_dim], dtype=bool)
+    for i in range(n_elec):
+        single_particle_mask = single_particle_mask.at[i, i, :].set(True)
+    # prepare to calculate wf ratios
+    batched_logpsi = jax.vmap(log_psi_from_model(ansatz), in_axes=[None, 0])
+    # locations to evaluate n(k) on
+    kvecs = gen_ksphere(cell, kcut, twist=twist)
+    # quadraqure points for Fourier transform
+    key, subkey = jax.random.split(key)
+    pos1 = jax.random.uniform(subkey, (n_samp, n_dim)) @ cell
+
+    def calc_nofk_snapshot_one_particle(pos: Array, p1: Array, logpsi0: float) -> Array:
+        dr = p1 - pos  # move vectors, one for each particle [n_e, n_dim]
+        eikr = jnp.exp(1j * jnp.tensordot(kvecs, -dr, (-1, -1)))  # [n_k, n_e]
+        # move each particle to p1
+        dpos = dr[None] * single_particle_mask  # [n_e, n_e, n_dim]
+        r1 = pos[None] + dpos
+        # evaluate wf ratios (all particles to one location)
+        logpsi1 = batched_logpsi(params, r1)
+        ratio = jnp.exp(logpsi1 - logpsi0)[None]  # same ratio for all k [-1, n_e]
+        nk1 = (eikr.real * ratio.real - eikr.imag * ratio.imag).sum(axis=-1)
+        return nk1
+
+    def calc_nofk_snapshot(pos: Array) -> Array:
+        logpsi0 = batched_logpsi(params, pos[None])[0]
+        one_fn = jax.vmap(calc_nofk_snapshot_one_particle, in_axes=(None, 0, None))
+        nk = one_fn(pos, pos1, logpsi0).mean(axis=0)
+        return nk
+
+    @jax.jit
+    def calc_nofk(walker: Array):
+        nk = lax.map(calc_nofk_snapshot, walker).mean(axis=0)
+        nk_spins = [nk]  # TODO: spin-resolved n(k)
+        return nk_spins, dict(kvecs=kvecs)
+
+    return calc_nofk
