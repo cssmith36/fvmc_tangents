@@ -164,11 +164,11 @@ class PairJastrowCCK(ElecWfn):
         dist /= rs # dist in units of rs
         # Jastrow
         jb = 0
-        jd = self.param("jastrow_d", fix_init, self.init_jd, _t_real)
+        jd = jnp.abs(self.param("jastrow_d", fix_init, self.init_jd, _t_real))
         cusp = rs * 1. / (ndim + 1)
         logpsi = - jastrow_CCK(dist[blkdiag_mask], jb, jd, cusp).sum()
         if multi_spin:
-            jd = self.param("jastrow_d_a", fix_init, 2 * self.init_jd, _t_real)
+            jd = jnp.abs(self.param("jastrow_d_a", fix_init, 2 * self.init_jd, _t_real))
             cusp = rs * 1. / (ndim - 1)
             logpsi -= jastrow_CCK(dist[offdiag_mask], jb, jd, cusp).sum()
         return 1, logpsi
