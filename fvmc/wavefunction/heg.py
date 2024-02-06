@@ -148,6 +148,7 @@ class PairJastrowCCK(ElecWfn):
     spins: Sequence[int]
     cell: Array
     init_jd: float = 2./3 # in the unit of rs
+    init_jd_a: float = 1./3
 
     @nn.compact
     def __call__(self, x: ElecConf) -> Tuple[Array, Array]:
@@ -168,7 +169,7 @@ class PairJastrowCCK(ElecWfn):
         cusp = rs * 1. / (ndim + 1)
         logpsi = - jastrow_CCK(dist[blkdiag_mask], jb, jd, cusp).sum()
         if multi_spin:
-            jd = jnp.abs(self.param("jastrow_d_a", fix_init, 2 * self.init_jd, _t_real))
+            jd = jnp.abs(self.param("jastrow_d_a", fix_init, self.init_jd_a, _t_real))
             cusp = rs * 1. / (ndim - 1)
             logpsi -= jastrow_CCK(dist[offdiag_mask], jb, jd, cusp).sum()
         return 1, logpsi
@@ -201,8 +202,8 @@ class BackflowEtaKCM(nn.Module):
         # parameters
         lamb = self.param('lamb', fix_init, 0.1, _t_real)
         sb = self.param('sb', fix_init, 0.5, _t_real)
-        rb = self.param('rb', fix_init, 0.05, _t_real)
-        wb = self.param('wb', fix_init, 0.0, _t_real)
+        rb = jnp.abs(self.param('rb', fix_init, 0.05, _t_real))
+        wb = jnp.abs(self.param('wb', fix_init, 0.0, _t_real))
         y = backflow_eta_KCM(r, lamb, sb, rb, wb)
         return y
 
