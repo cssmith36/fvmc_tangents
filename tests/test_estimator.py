@@ -3,6 +3,7 @@
 import jax
 import numpy as np
 import pytest
+import chex
 from jax import numpy as jnp
 
 from fvmc.estimator import (build_eval_local_elec, build_eval_local_full,
@@ -68,6 +69,47 @@ def test_eval_local_full_shape(pbc):
     bx = jnp.stack([x, x, x], 0) #batch dim has size 3
     beloc, bsign, blogf, bextras = jax.vmap(eval_local, (None, 0))(a, (br, bx))
     assert beloc.shape == bsign.shape == blogf.shape == (3,)
+
+
+def test_eval_local_custom():
+    f, logf = make_test_log_f()
+    model = make_dummy_model(get_sign_log(f))
+    nuclei, elems = make_test_ions()
+    dummy_kwargs = {"ke_kwargs": lambda *a,**k: 0.,
+                    "pe_kwargs": lambda *a,**k: 0.}
+    eval_local = build_eval_local_elec(model, elems, nuclei, **dummy_kwargs)
+
+    a = None
+    x = make_test_x()
+    eloc, sign, logf, extras = eval_local(a, x)
+    assert eloc.shape == sign.shape == logf.shape == tuple()
+    chex.assert_trees_all_equal(eloc, extras["e_kin"], extras["e_coul"], 0.)
+
+    bx = jnp.stack([x, x, x], 0) #batch dim has size 3
+    beloc, bsign, blogf, bextras = jax.vmap(eval_local, (None, 0))(a, bx)
+    assert beloc.shape == bsign.shape == blogf.shape == (3,)
+    chex.assert_trees_all_equal(beloc, bextras["e_kin"], bextras["e_coul"], jnp.zeros(3))
+
+
+def test_eval_local_custom_full():
+    f, logf = make_test_log_f()
+    model = make_dummy_model(get_sign_log(f, dummy_r=True))
+    r, elems = make_test_ions()
+    dummy_kwargs = {"ke_kwargs": lambda *a,**k: 0.,
+                    "pe_kwargs": lambda *a,**k: 0.}
+    eval_local = build_eval_local_full(model, elems, **dummy_kwargs)
+
+    a = None
+    x = make_test_x()
+    eloc, sign, logf, extras = eval_local(a, (r,x))
+    assert eloc.shape == sign.shape == logf.shape == tuple()
+    chex.assert_trees_all_equal(eloc, extras["e_kin"], extras["e_coul"], 0.)
+
+    br = jnp.stack([r, r, r], 0) #batch dim has size 3
+    bx = jnp.stack([x, x, x], 0) #batch dim has size 3
+    beloc, bsign, blogf, bextras = jax.vmap(eval_local, (None, 0))(a, (br, bx))
+    assert beloc.shape == bsign.shape == blogf.shape == (3,)
+    chex.assert_trees_all_equal(beloc, bextras["e_kin"], bextras["e_coul"], jnp.zeros(3))
 
 
 @pytest.mark.parametrize("mini_batch", [None, 1])

@@ -55,10 +55,12 @@ def build_eval_local_elec(model, elems, nuclei, cell=None, *,
     """
 
     ke_kwargs = ke_kwargs or {}
-    ke_fn = partial(calc_ke_elec, **ke_kwargs)
+    ke_fn = (ke_kwargs if callable(ke_kwargs) else
+             partial(calc_ke_elec, **ke_kwargs))
     pe_kwargs = pe_kwargs or {}
-    pe_fn = (EwaldSum(cell, **pe_kwargs).calc_pe
-             if cell is not None else partial(calc_pe, **pe_kwargs))
+    pe_fn = (pe_kwargs if callable(pe_kwargs) else
+             partial(calc_pe, **pe_kwargs) if cell is None else
+             EwaldSum(cell, **pe_kwargs).calc_pe)
     extpot_fns = parse_extpots(extpots, elems=elems, nuclei=nuclei, cell=cell)
 
     def eval_local(params, x: ElecConf):
@@ -99,10 +101,12 @@ def build_eval_local_full(model, elems, cell=None, *,
 
     mass = get_nuclei_mass(elems)
     ke_kwargs = ke_kwargs or {}
-    ke_fn = partial(calc_ke_full, **ke_kwargs)
+    ke_fn = (ke_kwargs if callable(ke_kwargs) else
+             partial(calc_ke_full, **ke_kwargs))
     pe_kwargs = pe_kwargs or {}
-    pe_fn = (EwaldSum(cell, **pe_kwargs).calc_pe
-             if cell is not None else partial(calc_pe, **pe_kwargs))
+    pe_fn = (pe_kwargs if callable(pe_kwargs) else
+             partial(calc_pe, **pe_kwargs) if cell is None else
+             EwaldSum(cell, **pe_kwargs).calc_pe)
     extpot_fns = parse_extpots(extpots, elems=elems, cell=cell)
 
     def eval_local(params, conf: FullConf):
