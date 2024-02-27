@@ -124,11 +124,12 @@ class PlanewaveOrbital(nn.Module):
             kernel_init=nn.initializers.normal(self.init_scale))
         # work on spins
         if self.spin_symmetry:
-            n_orb = max(self.spins) if not self.full_det else n_elec
-            raw_orbs = PWDense(n_orb)(eikx) # [n_elec, n_orb]
+            n_orb = max(self.spins)
             if self.full_det:
-                orbitals = [raw_orbs]
+                raw_orbs = PWDense(n_orb * len(self.spins))(eikx).reshape(-1)
+                orbitals = [raw_orbs[_get_fulldet_spin_symm_index(self.spins)]]
             else:
+                raw_orbs = PWDense(n_orb)(eikx) # [n_elec, n_orb]
                 orb_secs = jnp.split(raw_orbs, split_idx, axis=0)
                 orbitals = [raw_orb[:, :n_si]
                             for n_si, raw_orb in zip(self.spins, orb_secs)]
@@ -142,6 +143,24 @@ class PlanewaveOrbital(nn.Module):
                 orbitals = [PWDense(n_si)(pw_si)
                             for n_si, pw_si in zip(self.spins, pw_secs)]
         return orbitals
+
+
+def _get_fulldet_spin_symm_index(spins):
+    # get the index to construct the full determinant for spin symmetry case
+    # raw orbitals are [n_elec, n_orb, n_comp] and flattened before indexing
+    # for 2 component case give the matrix idx of the right -> | a(up) b(up) |
+    # a, b: orbitals;  up, dn: electrons (with spin up/dn) --> | b(dn) a(dn) |
+    n_elec, n_orb, n_comp = sum(spins), max(spins), len(spins)
+    with jax.ensure_compile_time_eval():
+        flat_idx = jnp.arange(n_elec * n_orb * n_comp, dtype=int)
+        raw_idx = flat_idx.reshape(n_elec, n_orb, n_comp)
+        splited = jnp.split(raw_idx, onp.cumsum(spins)[:-1], axis=0)
+        rolled = jnp.concatenate(
+            [jnp.roll(x, i, axis=-1) for i, x in enumerate(splited)], axis=0)
+        columns = [rolled[:, :n_si, i] for i, n_si in enumerate(spins)]
+        idx = jnp.concatenate(columns, axis=-1)
+    assert idx.shape == (n_elec, n_elec)
+    return idx
 
 
 class PairJastrowCCK(ElecWfn):

@@ -92,6 +92,25 @@ def test_planewave_slater(spins, cell, multi_det, spin_symmetry, full_det):
     _check_perm(_key0, model, params, cell, anti_symm=True)
 
 
+@pytest.mark.parametrize("full_det", [True, False])
+@pytest.mark.parametrize("multi_det", [None, 4])
+def test_slater_spin_symm(full_det, multi_det):
+    nelec = 16
+    nup = ndn = 8
+    spins = [nup, ndn]
+    cell = _cell3d
+    model = PlanewaveSlater(spins=spins, cell=cell, spin_symmetry=True,
+                            full_det=full_det, multi_det=multi_det)
+    params = model.init(_key0, jnp.zeros((_nelec, cell.shape[-1]))
+                        )
+    x = jax.random.uniform(_key0, (nelec, cell.shape[-1]))
+    x_swap = jnp.roll(x, nup, axis=0)
+    sign1, logf1 = model.apply(params, x)
+    sign2, logf2 = model.apply(params, x_swap)
+    np.testing.assert_allclose(sign2, sign1)
+    np.testing.assert_allclose(logf2, logf1)
+
+
 @pytest.mark.parametrize("cell", [_cell3d, _cell2d])
 @pytest.mark.parametrize("spins", [_spins1, _spins2])
 def test_pair_jastrow_cck(spins, cell):
