@@ -459,6 +459,12 @@ def ensure_no_spin(x: ElecConf) -> ElecCoord:
         raise ValueError("spin information is not allowed")
     return x
 
+def ensure_spin(x: ElecConf) -> ElecConf:
+    x, s = split_spin(x)
+    if s is None:
+        raise ValueError("spin required")
+    return x, s
+
 
 def collect_elems(elems):
     elems = onp.asarray(elems)
