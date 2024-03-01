@@ -238,6 +238,7 @@ def make_adaptive(
                                     adapt_value)
             new_sample, *new_aux = new_inner_state
             new_state = (new_sample, new_aux, count+1, adapt_value, new_ema_ref)
+            info["tuned_hparam"] = adapt_value
             return new_state, data, info
         # refresh the inner state
         def refresh(state, params):

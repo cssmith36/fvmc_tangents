@@ -327,6 +327,8 @@ def run(step_fn, train_state, iterations, log_cfg):
             stat_dict = {"step": istep, **opt_info["aux"],
                          "acc": acc_rate, "hacc": hacc_rate,
                          "lr":opt_info["learning_rate"]}
+            if "tuned_hparam" in mc_info:
+                stat_dict["mc_hp"] = PAXIS.all_mean(mc_info["tuned_hparam"])
             stat_dict = {k: v[0] if jnp.ndim(v) > 0 else v # collect from potential pmap
                          for k, v in stat_dict.items()}
             printer.print_fields(stat_dict)
