@@ -95,7 +95,7 @@ def scale_by_fisher_inverse(
         if not (isinstance(data, Tuple) and len(data) == 2):
             data = (data, None)
         sample, logsw = data
-        n_sample = sample.shape[0]
+        n_sample = jax.tree_leaves(sample)[0].shape[0]
         # make sure paxis.sum(jnp.sum(rel_w)) == 1, and rel_w has to be positive
         rel_w = jnp.ones((1,))
         if use_weighted and logsw is not None:
@@ -123,9 +123,10 @@ def scale_by_fisher_inverse(
         if mini_batch is None:
             score = score_fn(sample)
         else:
-            batch_sample = sample.reshape(-1, mini_batch, *sample.shape[1:])
+            batch_sample = jax.tree_map(
+                lambda s: s.reshape(-1, mini_batch, *s.shape[1:]), sample)
             batch_score = lax.map(score_fn, batch_sample)
-            score = batch_score.reshape(sample.shape[0], grads_flat.shape[-1])
+            score = batch_score.reshape(-1, grads_flat.shape[-1])
         # paxis.sum(jnp.sum(rel_w)) == 1, and rel_w has to be positive
         mean_score = paxis.psum(jnp.sum(rel_w[:, None] * score, axis=0))
         center_factor = 1. - jnp.sqrt(1. - shift_factor)

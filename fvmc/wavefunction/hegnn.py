@@ -5,11 +5,11 @@ import jax
 from flax import linen as nn
 from jax import numpy as jnp
 
-from ..utils import (Array, ElecConf, _t_real,
-                     build_mlp, ensure_no_spin, parse_activation)
+from ..utils import (Array, ElecConf, _t_real, build_mlp, parse_activation,
+                     attach_spin, split_spin)
 from .base import ElecWfn
-from .neuralnet_pbc import raw_features_pbc
 from .heg import heg_rs
+from .neuralnet_pbc import raw_features_pbc
 
 
 class NeuralBackflow(nn.Module):
@@ -29,15 +29,15 @@ class NeuralBackflow(nn.Module):
     @nn.compact
     def __call__(self, x: ElecConf) -> Tuple[ElecConf, Tuple[float, float]]:
         # set up constants
-        x = ensure_no_spin(x)
+        x, _s = split_spin(x)
         n_elec, n_dim = x.shape
-        assert sum(self.spins) == n_elec
+        assert not self.spins or sum(self.spins) == n_elec
         actv_fn = parse_activation(self.activation)
         # input independent arrays
         with jax.ensure_compile_time_eval():
             invvec = jnp.linalg.inv(self.cell)
             rs = heg_rs(self.cell, n_elec)
-            if len(self.spins) == 1: # all same spin, no need to compute s_ij
+            if not self.spins or len(self.spins) == 1: # all same spin, no need to compute s_ij
                 s_ij = jnp.zeros((n_elec, n_elec, 1))
             else:
                 assert len(self.spins) == 2, "only support 2 type of spins"
@@ -75,7 +75,7 @@ class NeuralBackflow(nn.Module):
                            kernel_init=self.kernel_init)
         jastrow = jasmlp(j_in).sum()
         # return the final coordinates and the jastrow
-        return x, (1., jastrow)
+        return attach_spin(x, _s), (1., jastrow)
 
 
 class MessagePassingLayer(nn.Module):
