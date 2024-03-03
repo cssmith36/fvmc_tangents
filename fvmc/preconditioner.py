@@ -95,7 +95,7 @@ def scale_by_fisher_inverse(
         if not (isinstance(data, Tuple) and len(data) == 2):
             data = (data, None)
         sample, logsw = data
-        n_sample = jax.tree_leaves(sample)[0].shape[0]
+        n_sample = jax.tree_util.tree_leaves(sample)[0].shape[0]
         # make sure paxis.sum(jnp.sum(rel_w)) == 1, and rel_w has to be positive
         rel_w = jnp.ones((1,))
         if use_weighted and logsw is not None:
