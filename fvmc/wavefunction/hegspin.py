@@ -115,8 +115,9 @@ class PairJastrowCCKSpin(ElecWfn):
         # Jastrow
         jb = 0
         jd = jnp.abs(self.param("jastrow_d", fix_init, self.init_jd, _t_real))
-        cusp = rs * 1. / (ndim - 1) # cusp for anti parallel spins
+        cusp = 1 / (ndim - 1) # cusp for anti parallel spins
         if self.optimize_cusp:
-            cusp = self.param("cusp", fix_init, cusp, _t_real)
+            cusp = jnp.abs(self.param("cusp", fix_init, cusp, _t_real))
+        cusp *= rs
         logpsi = - jastrow_CCK(dist[blkdiag_mask], jb, jd, cusp).sum()
         return 1, logpsi
