@@ -30,10 +30,10 @@ def rwsc(axes, dn=2):
     r2imgl  = []  # keep a list of distance^2 to all neighboring images
     images = product(range(-dn, dn+1), repeat=ndim)
     for ushift in images:
-      if sum(ushift) == 0:
-        continue  # ignore self
-      shift = np.dot(ushift, axes)
-      r2imgl.append(np.dot(shift, shift))
+        if sum(ushift) == 0:
+            continue  # ignore self
+        shift = np.dot(ushift, axes)
+        r2imgl.append(np.dot(shift, shift))
     rimg = np.sqrt(min(r2imgl))
     return rimg/2.
 
@@ -45,6 +45,7 @@ def main():
     parser.add_argument('--iter', '-i', type=int, default=0)
     parser.add_argument('--jter', '-j', type=int, default=None)
     parser.add_argument('--verbose', '-v', action='store_true')
+    parser.add_argument('--spinor', '-s', action='store_true')
     args = parser.parse_args()
 
     # set up folder to cache results
@@ -55,7 +56,10 @@ def main():
     meta_sys = obs.read_meta(args.fyml)
     cell = jnp.asarray(meta_sys['system']['cell'])
     nelec = meta_sys['system']['nelec']
-    spins = meta_sys['system']['spins']
+    if args.spinor:
+        spins = (nelec,)
+    else:
+        spins = meta_sys['system']['spins']
     nspin = len(spins)
     print('spins = ', spins)
 
@@ -63,11 +67,11 @@ def main():
     ndim = len(cell)
 
     # read trajectories
-    traj = obs.read_traj(args.ftraj, ndim)[args.iter:args.jter]
+    traj = obs.read_traj(args.ftraj, ndim, nelec)[args.iter:args.jter]
     niter, nwalker, nelec, ndim = traj.shape
     if niter < 4:  # !!!! HACK: split walkers for errorbar
-      niter = 4
-      traj = traj.reshape(niter, -1, nelec, ndim)
+        niter = 4
+        traj = traj.reshape(niter, -1, nelec, ndim)
 
     # calculate observables
     nx = ny = 32
@@ -80,7 +84,7 @@ def main():
     edges = meta_dens['edges']
     meta = dict(aname='density', cell=cell.tolist())
     for i, e in enumerate(edges):
-      meta['edge%d' % i] = e.tolist()
+        meta['edge%d' % i] = e.tolist()
     obs.save_obs('%s/dens' % cache_dir, meta, rhoms, rhoes)
 
     #   pair correlation g(r)
@@ -99,7 +103,7 @@ def main():
     #   save with processed metadata
     meta = dict(aname='vecgofr', cell=cell.tolist())
     for i, e in enumerate(meta_gv['edges']):
-      meta['edge%d' % i] = e.tolist()
+        meta['edge%d' % i] = e.tolist()
     obs.save_obs('%s/vecgofr' % cache_dir, meta, gvms, gves)
 
     #   S(k)
@@ -122,10 +126,10 @@ def main():
     dskl = []
     k = 0
     for ii, rkmi in enumerate(rkms):
-      for _, rkmj in enumerate(rkms[ii:], start=ii):
-        dskm = skms[k] - (rkmi*rkmj.conj())
-        dskl.append(dskm.real)
-        k += 1
+        for _, rkmj in enumerate(rkms[ii:], start=ii):
+            dskm = skms[k] - (rkmi*rkmj.conj())
+            dskl.append(dskm.real)
+            k += 1
     meta = dict(aname='dsk', kvecs=kvecs)
     obs.save_obs('%s/dsk' % cache_dir, meta, dskl, skes)
 

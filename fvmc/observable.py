@@ -45,16 +45,17 @@ def read_meta(fmeta: str) -> dict:
     """
     # read raw metadata
     with open(fmeta, 'r') as f:
-      meta = yaml.safe_load(f)
+      meta = yaml.full_load(f)
     # derived metadata
-    #   nelec
-    #   !!!! HACK only works for heg
-    nelec = -meta['system']['charge']
+    elems = meta['system']['elems']
+    # nelec
+    nelec = sum(elems) if elems else 0
+    nelec -= meta['system']['charge']
     meta['system']['nelec'] = nelec
-    #   spins
+    # spins
     spin = meta['system']['spin']
     spins = parse_spin_num(nelec, spin)
-    #   !!!! HACK add following to parse_spin?
+    # !!!! HACK add following to parse_spin?
     for i, ns in enumerate(spins):
       if ns <= 0:
         spins = spins[:i]
@@ -63,7 +64,7 @@ def read_meta(fmeta: str) -> dict:
     return meta
 
 
-def read_traj(ftraj : str, ndim : int) -> Array:
+def read_traj(ftraj: str, ndim: int, nelec: int = None) -> Array:
     """ read trajectory dump into array
 
     Args:
@@ -73,13 +74,16 @@ def read_traj(ftraj : str, ndim : int) -> Array:
       Array: particle coordinates, shape (niter, nsample, nelec, ndim)
     """
     data = np.load(ftraj)
-    niter, nsample, nelec_ndim = data.shape
-    nelec = nelec_ndim // ndim
-    if nelec*ndim != nelec_ndim:
-        msg = ('read_traj failed to infer dimensions: '
-              f'Ne={nelec} ndim={ndim} but Ne*ndim={nelec_ndim}')
-        raise RuntimeError(msg)
-    traj = data.reshape(niter, nsample, nelec, ndim)
+    niter, nsample, ncoord = data.shape
+    if nelec is None:
+        nelec = ncoord // ndim
+        if nelec * ndim != ncoord:
+            msg = ('read_traj failed to infer dimensions: '
+                  f'ndim={ndim} but ncoord={ncoord}, '
+                   'please specify nelec explicitly')
+            raise RuntimeError(msg)
+    # HACK assume the spin variable is at tail here
+    traj = data[:, :, :nelec * ndim].reshape(niter, nsample, nelec, ndim)
     return traj
 
 

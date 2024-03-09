@@ -11,17 +11,17 @@ from fvmc.utils import load_pickle
 from fvmc.train import TrainingState
 
 def import_function(path: str) -> Callable:
-  """import function at run time
+    """import function at run time
 
-  Args:
-    path (str): path to function, e.g., "numpy.linalg.norm"
-  Return:
-    Callable: imported function, e.g., norm
-  """
-  mod_path, fn_name = path.rsplit('.', maxsplit=1)
-  mod = import_module(mod_path)
-  fn = getattr(mod, fn_name)
-  return fn
+    Args:
+      path (str): path to function, e.g., "numpy.linalg.norm"
+    Return:
+      Callable: imported function, e.g., norm
+    """
+    mod_path, fn_name = path.rsplit('.', maxsplit=1)
+    mod = import_module(mod_path)
+    fn = getattr(mod, fn_name)
+    return fn
 
 def main():
     from argparse import ArgumentParser
@@ -95,4 +95,4 @@ def main():
     obs.save_obs('%s/nofk' % cache_dir, meta, nkm, nke)
 
 if __name__ == '__main__':
-  main()  # set no global variable
+     main()  # set no global variable
