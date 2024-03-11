@@ -8,7 +8,6 @@ from typing import Callable
 from fvmc import observable as obs
 from fvmc.wavefunction.heg import heg_rs
 from fvmc.utils import load_pickle
-from fvmc.train import TrainingState
 
 def import_function(path: str) -> Callable:
     """import function at run time
@@ -84,8 +83,7 @@ def main():
     cfg = get_config(nelec, rs)#, twist)
     ansatz = cfg.ansatz
     # read ansatz parameters
-    train_state = TrainingState(*load_pickle(fchk))
-    params = train_state.params
+    params = load_pickle(fchk)[1]
 
     # calculate observables
     calc_nofk = obs.gen_calc_nofk(cell, kcut, twist, nelec, ansatz, params, key)

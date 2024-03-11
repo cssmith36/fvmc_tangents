@@ -1,18 +1,10 @@
 #!/usr/bin/env python
 import os
-import yaml
 import numpy as np
 import jax.numpy as jnp
 from fvmc import observable as obs
+from fvmc.wavefunction.heg import heg_rs
 from fvmc.ewaldsum import gen_pbc_disp_fn
-from fvmc.utils import Array
-
-def heg_rs(axes: Array, natom: int) -> float:
-    ndim = len(axes)
-    vol = np.linalg.det(axes)
-    vol_pp = vol/natom
-    rs = ((2*(ndim-1)*np.pi)/(ndim*vol_pp))**(-1./ndim)
-    return rs
 
 def rwsc(axes, dn=2):
     """ radius of the inscribed sphere inside the real-space
@@ -44,6 +36,7 @@ def main():
     parser.add_argument('--fyml', type=str, default='hparams.yaml')
     parser.add_argument('--iter', '-i', type=int, default=0)
     parser.add_argument('--jter', '-j', type=int, default=None)
+    parser.add_argument('--nx', '-n', type=int, default=48)
     parser.add_argument('--verbose', '-v', action='store_true')
     parser.add_argument('--spinor', '-s', action='store_true')
     args = parser.parse_args()
@@ -62,6 +55,7 @@ def main():
         spins = meta_sys['system']['spins']
     nspin = len(spins)
     print('spins = ', spins)
+    meta_sys = dict(spins=list(spins), cell=cell.tolist())
 
     # derived metadata
     ndim = len(cell)
@@ -74,15 +68,16 @@ def main():
         traj = traj.reshape(niter, -1, nelec, ndim)
 
     # calculate observables
-    nx = ny = 32
-    bins = (nx, ny)
 
+    nx = args.nx
     #   density rho(r)
+    bins = (nx,)*ndim
     calc_dens = obs.gen_calc_dens(cell, spins, bins)
     meta_dens, rhoms, rhoes = obs.calc_obs(traj, calc_dens)
     #   save with processed metadata
     edges = meta_dens['edges']
-    meta = dict(aname='density', cell=cell.tolist())
+    meta = dict(aname='density')
+    meta.update(meta_sys)
     for i, e in enumerate(edges):
         meta['edge%d' % i] = e.tolist()
     obs.save_obs('%s/dens' % cache_dir, meta, rhoms, rhoes)
@@ -95,15 +90,17 @@ def main():
     #   save with processed metadata
     r = meta_gofr['r']
     meta = dict(aname='gofr', r=r.tolist())
+    meta.update(meta_sys)
     obs.save_obs('%s/gofr' % cache_dir, meta, grms, gres)
 
     #   vector
     calc_pair_hist = obs.gen_calc_pair_hist(cell, spins, bins)
     meta_gv, gvms, gves = obs.calc_obs(traj, calc_pair_hist)
     #   save with processed metadata
-    meta = dict(aname='vecgofr', cell=cell.tolist())
+    meta = dict(aname='vecgofr')
     for i, e in enumerate(meta_gv['edges']):
-        meta['edge%d' % i] = e.tolist()
+      meta['edge%d' % i] = e.tolist()
+    meta.update(meta_sys)
     obs.save_obs('%s/vecgofr' % cache_dir, meta, gvms, gves)
 
     #   S(k)
@@ -118,8 +115,10 @@ def main():
     #   save with processed metadata
     kvecs = meta_sofk['kvecs'].tolist()
     meta = dict(aname='rhok', kvecs=kvecs)
+    meta.update(meta_sys)
     obs.save_obs('%s/rhok' % cache_dir, meta, rkms, rkes)
     meta = dict(aname='sofk', kvecs=kvecs)
+    meta.update(meta_sys)
     obs.save_obs('%s/sofk' % cache_dir, meta, skms, skes)
 
     # extra processing for fluctuating S(k)
@@ -131,6 +130,7 @@ def main():
             dskl.append(dskm.real)
             k += 1
     meta = dict(aname='dsk', kvecs=kvecs)
+    meta.update(meta_sys)
     obs.save_obs('%s/dsk' % cache_dir, meta, dskl, skes)
 
 if __name__ == '__main__':
