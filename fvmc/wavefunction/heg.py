@@ -166,8 +166,8 @@ def _get_fulldet_spin_symm_index(spins):
 class PairJastrowCCK(ElecWfn):
     spins: Sequence[int]
     cell: Array
-    init_jd: float = 2./3 # in the unit of rs
-    init_jd_a: float = 1./3
+    init_jd: float = 1/2 # in the unit of rs
+    init_jd_a: float = 1/4
 
     @nn.compact
     def __call__(self, x: ElecConf) -> Tuple[Array, Array]:
@@ -179,17 +179,18 @@ class PairJastrowCCK(ElecWfn):
             multi_spin = len(self.spins) > 1 and offdiag_mask.sum() > 0
             latvec = self.cell
             rs = heg_rs(latvec, n_elec)
+            inv_jd = 1 / (self.init_jd * rs)
+            inv_jd_a = 1 / (self.init_jd_a * rs)
         # minimal image distance with sin wrap
         _, _, dist = dist_features_pbc(x, latvec, frac_dist=False, keepdims=False)
-        dist /= rs # dist in units of rs
         # Jastrow
         jb = 0
-        jd = jnp.abs(self.param("jastrow_d", fix_init, self.init_jd, _t_real))
-        cusp = rs * 1. / (ndim + 1)
+        jd = 1 / jnp.abs(self.param("inv_jd", fix_init, inv_jd, _t_real))
+        cusp = 1. / (ndim + 1)
         logpsi = - jastrow_CCK(dist[blkdiag_mask], jb, jd, cusp).sum()
         if multi_spin:
-            jd = jnp.abs(self.param("jastrow_d_a", fix_init, self.init_jd_a, _t_real))
-            cusp = rs * 1. / (ndim - 1)
+            jd = 1 / jnp.abs(self.param("inv_jd_a", fix_init, inv_jd_a, _t_real))
+            cusp = 1. / (ndim - 1)
             logpsi -= jastrow_CCK(dist[offdiag_mask], jb, jd, cusp).sum()
         return 1, logpsi
 

@@ -97,7 +97,7 @@ class PlanewaveOrbitalSpin(nn.Module):
 
 class PairJastrowCCKSpin(ElecWfn):
     cell: Array
-    init_jd: float = 2./3 # in the unit of rs
+    init_jd: float = 1/4 # in the unit of rs
     optimize_cusp: bool = False
 
     @nn.compact
@@ -109,15 +109,14 @@ class PairJastrowCCKSpin(ElecWfn):
             blkdiag_mask, _ = block_diagonal_masks([n_elec], n_elec, True)
             latvec = self.cell
             rs = heg_rs(latvec, n_elec)
+            inv_jd = 1 / (self.init_jd * rs)
         # minimal image distance with sin wrap
         _, _, dist = dist_features_pbc(x, latvec, frac_dist=False, keepdims=False)
-        dist /= rs # dist in units of rs
         # Jastrow
         jb = 0
-        jd = jnp.abs(self.param("jastrow_d", fix_init, self.init_jd, _t_real))
+        jd = 1 / jnp.abs(self.param("inv_jd", fix_init, inv_jd, _t_real))
         cusp = 1 / (ndim - 1) # cusp for anti parallel spins
         if self.optimize_cusp:
-            cusp = jnp.abs(self.param("cusp", fix_init, cusp, _t_real))
-        cusp *= rs
+            cusp = self.param("cusp", fix_init, cusp, _t_real)
         logpsi = - jastrow_CCK(dist[blkdiag_mask], jb, jd, cusp).sum()
         return 1, logpsi

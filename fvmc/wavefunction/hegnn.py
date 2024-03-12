@@ -19,7 +19,7 @@ class NeuralBackflow(nn.Module):
     pair_size: int = 26 # size of h_ij, before concat with x0_ij (size 6 for 2D)
     mlp_width: int = 32 # width of the mlp of the message passing layer
     attn_width: int = 32 # width of the message passing layer m_ij
-    backflow_scale: float = 0.1 # hardcoded scale of the backflow shift (in rs)
+    backflow_scale: float = 0.03 # hardcoded scale of the backflow shift (in rs)
     backflow_layers: int = 3 # number of message passing layers
     jastrow_width: int = 32 # width of the hidden layers in the jastrow mlp
     jastrow_layers: int = 3 # number of layers in the jastrow mlp
@@ -33,6 +33,7 @@ class NeuralBackflow(nn.Module):
         n_elec, n_dim = x.shape
         assert not self.spins or sum(self.spins) == n_elec
         actv_fn = parse_activation(self.activation)
+        MyDense = partial(nn.Dense, param_dtype=_t_real, kernel_init=self.kernel_init)
         # input independent arrays
         with jax.ensure_compile_time_eval():
             invvec = jnp.linalg.inv(self.cell)
@@ -59,20 +60,21 @@ class NeuralBackflow(nn.Module):
                 activation=actv_fn, kernel_init=self.kernel_init
             )(h_i, h_ij, x0_i, x0_ij)
         # the final displacement vector
-        bfdense = nn.Dense(n_dim, kernel_init=self.kernel_init, use_bias=False)
+        bfdense = MyDense(n_dim, use_bias=False)
         x = x + bfdense(h_i) * self.backflow_scale * rs
         # neural jastrow
         x_pbc = jnp.concatenate(
             [jnp.sin(2 * jnp.pi * x @ invvec), jnp.cos(2 * jnp.pi * x @ invvec)],
             axis=-1)
-        x_expand = nn.Dense(self.single_size, kernel_init=self.kernel_init)(x_pbc)
+        x_expand = MyDense(self.single_size)(x_pbc)
         j_in = jnp.concatenate([h_i, actv_fn(x_expand)], axis=-1)
         # skip connection in the jastrow network
         jas_sizes = [self.jastrow_width] * self.jastrow_layers + [1]
         jasmlp = build_mlp(jas_sizes,
                            activation=actv_fn, last_bias=False,
                            residual=True, rescale=True,
-                           kernel_init=self.kernel_init)
+                           kernel_init=self.kernel_init,
+                           param_dtype=_t_real)
         jastrow = jasmlp(j_in).sum()
         # return the final coordinates and the jastrow
         return attach_spin(x, _s), (1., jastrow)
