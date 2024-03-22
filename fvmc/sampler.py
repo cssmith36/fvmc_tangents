@@ -171,14 +171,27 @@ def make_multistep_fn(sample_fn, n_step, concat=False):
 
 
 def make_chained(*samplers):
-    init = samplers[-1].init
+    # chain multiple sampler, always refresh
     def sample(key, params, state):
         info = {}
+        sample, aux_list = state
         for ii, splr in enumerate(samplers):
-            state = splr.refresh(state, params)
-            state, data, infoi = splr.sample(key, params, state)
+            inner = (sample, *aux_list[ii])
+            inner = splr.refresh(inner, params)
+            inner, data, infoi = splr.sample(key, params, inner)
+            sample, *aux = inner
+            aux_list[ii] = aux
             info[f"part_{ii}"] = infoi
+        state = sample, aux_list
         return state, data, info
+    # save all aux informations in state
+    def init(key, params):
+        aux_list = []
+        for splr in samplers:
+            sample, *aux = splr.init(key, params)
+            aux_list.append(aux)
+        return sample, aux_list
+    # dummy refresh, actual one is in sample
     def refresh(state, params):
         return state
     return MCSampler(sample, init, refresh)
@@ -319,12 +332,15 @@ def build_metropolis(logdens_fn, shape_or_init, sigma=0.1, steps=10, mass=1.):
 
 def build_langevin(logdens_fn, shape_or_init, tau=0.1, steps=10,
                    mass=1., grad_clipping=None):
+    # shape and constants
     sample_shape = _extract_sample_shape(shape_or_init)
     xsize, unravel = ravel_shape(sample_shape)
-    ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
-    logd_and_grad = jax.value_and_grad(ravel_logd, 1)
     mass = _align_vector(mass, sample_shape)
     tau = tau / mass
+    # prepare functions
+    if grad_clipping is not None: grad_clipping *= jnp.sqrt(mass)
+    ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
+    logd_and_grad = jax.value_and_grad(ravel_logd, 1)
 
     # log transition probability q(x2|x1)
     def log_q(x2, x1, g1):
@@ -361,20 +377,17 @@ def build_langevin(logdens_fn, shape_or_init, tau=0.1, steps=10,
 
 def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1.,
                       steps=None, segments=1, mass=1., speed_limit=None,
-                      jittered=False, grad_clipping=None,
-                      vmap_axis_name=MC_BATCH_AXIS_NAME,
-                      pmap_axis_name=PMAP_AXIS_NAME):
-    # initialize pmap and vmap utilities
-    vaxis = PmapAxis(vmap_axis_name)
-    paxis = PmapAxis(pmap_axis_name)
-    # prepare functions and constants
+                      jitter_dt=False, grad_clipping=None, div_threshold=1000.):
+    # shape information
     sample_shape = _extract_sample_shape(shape_or_init)
     xsize, unravel = ravel_shape(sample_shape)
-    ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
-    logd_and_grad = jax.value_and_grad(ravel_logd, 1)
     # align mass and rescale
     mass = _align_vector(mass, sample_shape)
     scale = jnp.sqrt(mass)
+    # prepare functions
+    if grad_clipping is not None: grad_clipping *= scale
+    ravel_logd = lambda p, x: logdens_fn(p, unravel(_gclip(x, grad_clipping)))
+    logd_and_grad = jax.value_and_grad(ravel_logd, 1)
     # kinetic energy function
     if speed_limit is None:
         ke_fn = lambda p: -logd_gaussian(p, 0, 1).sum(-1)
@@ -387,18 +400,15 @@ def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1.,
         if length is not None:
             from . import LOGGER
             LOGGER.warning("Both steps and length are given in hmc, use steps.")
-        length = steps * dt + 1e-12 # add a small number to gaurantee steps
+        length = steps * dt
     length /= segments
-
-    def _jitter_length(extra_state):
-        if not jittered:
-            return length, extra_state
-        jkey, subkey = jax.random.split(extra_state[0])
-        jlength = (1 - float(jittered) * jax.random.uniform(subkey)) * length
-        return jlength, (jkey, *extra_state[1:])
+    # function to get jittered dt
+    jitter_dt = float(jitter_dt)
+    _jdt = lambda k: ((dt * (1 + (jax.random.uniform(k) - 0.5) * 2 * jitter_dt))
+                      if 0 < jitter_dt <= 1 else dt)
 
     def step(key, params, state):
-        gkey, ukey = jax.random.split(key)
+        gkey, ukey, tkey = jax.random.split(key, 3)
         q1, g1, ld1, *extras = state
         # scaled coordinates to account for mass
         q1s, f1s, v1 = q1 * scale, -g1 / scale, -ld1
@@ -406,9 +416,8 @@ def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1.,
         # pe fn take scaled q as input
         pe_fn = lambda xs: -ravel_logd(params, xs / scale)
         # determine integration length and prepare leap frog
-        length, extras = _jitter_length(extras)
-        leapfrog = gen_leapfrog(pe_fn, dt, round(length / dt),
-                                kinetic_fn=ke_fn, with_carry=True)
+        leapfrog = gen_leapfrog(pe_fn, _jdt(tkey), round(length / dt), kinetic_fn=ke_fn,
+                                with_carry=True, threshold=div_threshold)
         # the actual integration
         q2s, p2, f2s, v2 = leapfrog(q1s, p1, f1s, v1)
         # scale back the coordinates for output
@@ -432,15 +441,7 @@ def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1.,
         ld_new, grads_new = logd_and_grad(params, sample)
         return (sample, grads_new.conj(), ld_new, *extras)
 
-    raw_init = _gen_init_from_refresh(refresh, shape_or_init)
-    def init(key, params):
-        key, jkey = jax.random.split(key)
-        raw_state = raw_init(key, params)
-        extras = []
-        if jittered:
-            extras.append(paxis.pmin(vaxis.pmin(jkey)))
-        state = (*raw_state, *extras)
-        return state
+    init = _gen_init_from_refresh(refresh, shape_or_init)
 
     return MCSampler(sample, init, refresh)
 
@@ -487,26 +488,33 @@ def mh_select(key, ratio, state1, state2):
     return new_state, cond
 
 
-def gen_leapfrog(potential_fn, dt, steps, kinetic_fn=None, with_carry=True):
+def gen_leapfrog(potential_fn, dt, steps, kinetic_fn=None,
+                 with_carry=True, threshold=1000.):
+    kinetic_fn = kinetic_fn or (lambda p: -logd_gaussian(p, 0, 1).sum(-1))
+    velocity_fn = jax.grad(kinetic_fn)
     pe_and_grad = jax.value_and_grad(potential_fn)
-    velocity_fn = (lambda p: p) if kinetic_fn is None else jax.grad(kinetic_fn)
 
     def leapfrog_carry(q, p, g, v):
         # p for momentom and q for position
         # g for grad (neg force) and v for potential
         # simple Euler integration step
-        def integral_step(i, carry):
-            q, p = carry
-            q += dt * velocity_fn(p)
-            p -= dt * pe_and_grad(q)[1].conj()
-            return (q, p)
+        e0 = v + kinetic_fn(p)
+        def integral_step(carry):
+            i, q, p, g, v, _div = carry
+            p -= 0.5 * dt * g # half p step
+            q += dt * velocity_fn(p) # whole q step
+            v, g = pe_and_grad(q)
+            g = g.conj()
+            p -= 0.5 * dt * g # half p step
+            k = kinetic_fn(p)
+            _div = jnp.abs(k + v - e0) > threshold
+            return i+1, q, p, g, v, _div
+        def loop_cond(carry):
+            i, _, _, _, _, _div = carry
+            return (i < steps) & ~_div
         # leapfrog by shifting half step
-        p -= 0.5 * dt * g # first half p
-        (q, p) = lax.fori_loop(1, steps, integral_step, (q, p))
-        q += dt * velocity_fn(p) # final whole step update of q
-        v, g = pe_and_grad(q)
-        g = g.conj() # for potential complex variables
-        p -= 0.5 * dt * g # final half p
+        carry = (0, q, p, g, v, False)
+        _, q, p, g, v, _ = lax.while_loop(loop_cond, integral_step, carry)
         return q, p, g, v
 
     def leapfrog_nocarry(q, p):

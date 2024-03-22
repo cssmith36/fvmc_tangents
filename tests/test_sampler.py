@@ -101,7 +101,7 @@ def test_sampler_adaptive(name):
 
 @pytest.mark.slow
 def test_sampler_hmc_jittered():
-    sampler = choose_sampler_builder("hmc")(_logprob_fn, _xshape, jittered=True)
+    sampler = choose_sampler_builder("hmc")(_logprob_fn, _xshape, jitter_dt=0.5)
     sampler = make_multistep(make_batched(sampler, _nchain, concat=False), _nstep, concat=False)
     shared_sampler_test(sampler, jit=True)
 

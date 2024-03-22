@@ -226,7 +226,20 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
             key = kfac_jax.utils.make_different_rng_key_on_all_devices(key)
         key, mckey, optkey, statekey = rng_split(key, 4)
         # initialize mc state
-        mc_state = sampler.init(mckey, params)
+        if "chains" in restart_cfg and restart_cfg.chains:
+            if isinstance(restart_cfg.chains, str):
+                LOGGER.info("Loading MC states from saved file")
+                chains_path = multi_process_name(restart_cfg.chains)
+                mc_state = load_pickle(chains_path)
+            else:
+                LOGGER.info("Restart from MC states in config")
+                mc_state = restart_cfg.chains
+            _ref_shape = jax.eval_shape(sampler.init, mckey, params)[0].shape
+            if len(mc_state) == 4 and mc_state[0].shape != _ref_shape:
+                mc_state = mc_state[2] # assuming TrainingState
+            mc_state = sampler.refresh(mc_state, params)
+        else:
+            mc_state = sampler.init(mckey, params)
         if "burn_in" in sample_cfg and sample_cfg.burn_in > 0:
             LOGGER.info(f"Burning in the sampler for {sample_cfg.burn_in} steps")
             key, subkey = rng_split(key)

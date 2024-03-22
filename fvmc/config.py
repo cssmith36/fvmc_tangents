@@ -14,6 +14,7 @@ def default() -> ConfigDict:
 
         "restart": {
             "params": None,
+            "chains": None,
             "states": None,
         },
 
