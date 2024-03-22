@@ -10,7 +10,8 @@ calc_[obs] typically operates on walker, and sometimes works for snapshot.
 Typical usage:
 >>> meta = read_meta('hparam.yml'); spins = meta['system']['spins']
 >>> cell = meta['system']['cell']; ndim = len(cell)
->>> traj = read_traj('trajdump.npy')
+>>> nelec = meta['system']['nelec']
+>>> traj = read_traj('trajdump.npy', ndim, nelec)
 >>> bins = (64,)*ndim  # density grid
 >>> rho_info, rho_mean, rho_error = calc_obs(traj, calc_dens, cell, spins, bins)
 >>> # calc_dens is directly jittable, so no gen_calc_dens and pass args
@@ -33,6 +34,7 @@ from .ewaldsum import gen_pbc_disp_fn, gen_positive_gpoints
 from .wavefunction.base import log_psi_from_model
 from .utils import Array, displace_matrix, parse_spin_num, pdist
 from .utils import ArrayTree, gen_ksphere
+from .utils import ElecConf, ensure_spin
 
 
 def read_meta(fmeta: str) -> dict:
@@ -64,30 +66,53 @@ def read_meta(fmeta: str) -> dict:
     return meta
 
 
-def read_traj(ftraj: str, ndim: int, nelec: int = None) -> Array:
-    """ read trajectory dump into array
+def read_traj(ftraj: str, ndim: int, nelec: int) -> ElecConf:
+    """Read trajectory dump into array
 
     Args:
       ftraj (str): trajdump.npy
       ndim (int): number of spatial dimensions
+      nelec (int): number of electrions
     Return:
       Array: particle coordinates, shape (niter, nsample, nelec, ndim)
+      Array: spin coordinates, shape (niter, nsample, nelec)
     """
     data = np.load(ftraj)
     niter, nsample, ncoord = data.shape
-    if nelec is None:
-        nelec = ncoord // ndim
-        if nelec * ndim != ncoord:
-            msg = ('read_traj failed to infer dimensions: '
-                  f'ndim={ndim} but ncoord={ncoord}, '
-                   'please specify nelec explicitly')
-            raise RuntimeError(msg)
+    ned = nelec * ndim
     # HACK assume the spin variable is at tail here
-    traj = data[:, :, :nelec * ndim].reshape(niter, nsample, nelec, ndim)
-    return traj
+    traj = data[:, :, :ned].reshape(niter, nsample, nelec, ndim)
+    straj = data[:, :, ned:]
+    return traj, straj
 
 
-def calc_obs(traj: Array, calc_func: Callable, *args, **kwargs):
+def reshape_traj(traj: Array, batch_size:int, max_batch:int=None):
+    """Reshape trajectory to limit memory and time costs
+
+    Args:
+      traj (Array): trajectory with shape (niter, nsample, **nconf)
+      batch_size (int): number of configs. in a batch, limit memory cost
+      max_batch (int, optional): maximum number of batches, limit compute
+    Return:
+      Array: selected subset of given trajectory
+    """
+    traj_shape = traj.shape
+    niter, nsample = traj_shape[:2]
+    conf_shape = traj_shape[2:]
+    ntot = niter * nsample
+    nbatch = ntot // batch_size
+    if nbatch < 4:
+        msg = 'Too few batches %d for statistical error.' % nbatch
+        msg += '  reduce batch_size to ntot//4=%d (ntot=%d).' % (ntot//4, ntot)
+        raise RuntimeError(msg)
+    max_batch = min(max_batch, nbatch) if max_batch else nbatch
+    nleft = ntot % batch_size
+    nevery = nbatch // max_batch
+    flat_traj = traj.reshape(-1, *conf_shape)[nleft:]
+    return flat_traj[::nevery].reshape(-1, batch_size, *conf_shape)
+
+
+def calc_obs(traj: ElecConf, calc_func: Callable, *args, **kwargs):
     """Calculate observable from trajectory.
 
     Each calc_[obs](W_i, ...) computes observable O_i for walker W_i,
@@ -326,3 +351,105 @@ def gen_calc_nofk(
         return nk_spins, dict(kvecs=kvecs)
 
     return calc_nofk
+
+
+# =============================== mdens ==============================
+
+def paulis(s1, si):
+    r"""Project continuous spin to Pauli matrices <s1|\sigma|si>"""
+    sx = 2 * jnp.cos(s1 + si)
+    sy = 2 * jnp.sin(s1 + si)
+    sz = 2j * jnp.sin(s1 - si)
+    return sx, sy, sz
+
+def gen_calc_mdens(
+    cell: Array, bins: Tuple[int],
+    ansatz, params: ArrayTree
+) -> Callable:
+    # prepare to calculate fractional coordinates
+    invvec = jnp.linalg.inv(cell)
+    # prepare to calculate wf ratios
+    logpsi_fn = log_psi_from_model(ansatz)
+    batched_logpsi = jax.vmap(logpsi_fn, in_axes=[None, 0])
+
+    def project_spins(x: ElecConf) -> Array:
+        #from scipy.integrate import simpson
+        #int1d = simpson
+        # !!!! unable to use simpson in lax.map?
+        int1d = jax.scipy.integrate.trapezoid
+        # exact spin integration by Simpson's rule
+        ng = 9
+        sgrid = jnp.linspace(0, 2*jnp.pi, ng)
+
+        logpsi0 = logpsi_fn(params, x)
+        r, s = ensure_spin(x)
+        nelec, ndim = r.shape
+
+        def evaluate_spin_projections(s1: float):
+            """At a given spin value, evaluate projection of all electrons
+            onto Pauli matrices.
+
+            Args:
+                s1 (float): spin value on integration grid
+            Return:
+                Array: grid values with shape (3, nelec)
+            """
+            news = s1 * jnp.eye(nelec) + s * (1-jnp.eye(nelec))
+            newx = (jnp.broadcast_to(r, (nelec, nelec, ndim)), news)
+            logpsi1 = batched_logpsi(params, newx)
+            ratio = logpsi1 / logpsi0
+            sx, sy, sz = paulis(s1, s)
+            sxs = (sx * ratio).real
+            sys = (sy * ratio).real
+            szs = (sz * ratio).real
+            return jnp.vstack([sxs, sys, szs])
+
+        # get spin integration grids (ns, 3, nelec) for (3 Paulis, nelec e)
+        grids = jax.lax.map(evaluate_spin_projections, sgrid)
+        # integrate s1
+        weights = int1d(grids, x=sgrid, axis=0)
+        return weights
+
+    def calc_mdens_snapshot(x: ElecConf) -> Array:
+        r, s = ensure_spin(x)
+        fracs = (r @ invvec) % 1
+
+        weights = project_spins(x)
+        wx, wy, wz = weights
+
+        hx, _ = jnp.histogramdd(fracs, bins=bins, range=[(0, 1)]*len(bins), weights=wx)
+        hy, _ = jnp.histogramdd(fracs, bins=bins, range=[(0, 1)]*len(bins), weights=wy)
+        hz, _ = jnp.histogramdd(fracs, bins=bins, range=[(0, 1)]*len(bins), weights=wz)
+
+        nnr = np.prod(bins)
+        mags = jnp.array([hx, hy, hz]) * nnr
+        return mags
+
+    @ jax.jit
+    def calc_mdens(x: ElecConf):
+        # !!!! HACK: fake histogram to generate metadata
+        r, s = ensure_spin(x)
+        fracs = (r[0] @ invvec) % 1
+        _, edges = jnp.histogramdd(fracs, bins=bins, range=[(0, 1)]*len(bins))
+        meta = {'edges': edges}
+        mags = lax.map(calc_mdens_snapshot, x).mean(axis=0)
+        return [mags], meta
+
+    return calc_mdens
+
+
+# =============================== utils ==============================
+
+def default_argparse(max_batch=64):
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
+    parser.add_argument('ftraj', type=str)
+    parser.add_argument('--fyml', type=str, default='hparams.yaml')
+    parser.add_argument('--iter', '-i', type=int, default=0)
+    parser.add_argument('--jter', '-j', type=int, default=None)
+    parser.add_argument('--max_batch', '-m', type=int, default=max_batch,
+        help='reduce to save time')
+    parser.add_argument('--batch_size', '-b', type=int, default=32,
+        help='reduce to save memory')
+    parser.add_argument('--verbose', '-v', action='store_true')
+    return parser

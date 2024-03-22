@@ -71,6 +71,25 @@ def show_rhos(fig, rvecs, rhos, colorbar=False):
       raise RuntimeError(msg)
     return axl
 
+def show_mags(fig, rvecs, mags, rhom=None, colorbar=False):
+    mesh = mags.shape[-2:]
+    axl = []
+    for i in range(4):
+        ax = fig.add_subplot(2, 2, i+1, aspect=1)
+        axl.append(ax)
+    axl[0].set_title('total')
+    if rhom is not None:
+        cs = contour_scatter(axl[0], rvecs, rhom.ravel(), mesh=mesh)
+        if colorbar:
+            plt.colorbar(cs)
+    names = ['x', 'y', 'z']
+    for ax, mag, name in zip(axl[1:], mags, names):
+        ax.set_title(name)
+        cs = contour_scatter(ax, rvecs, mag.ravel(), mesh=mesh)
+        if colorbar:
+            plt.colorbar(cs)
+    return axl
+
 # from qharv with MIT (qharv.field.kyrt.set_style)
 def set_style(style='ticks', context='talk', **kwargs):
   import seaborn as sns
@@ -156,9 +175,7 @@ def main():
   obs_type = meta['aname']
   if obs_type == 'density':
     # interpret
-    rhoms, rhoes = ym, ye
-    # normalize
-    rhoms /= nelec
+    rhoms, rhoes = ym/nelec, ye/nelec
     edges = np.asarray([meta['edge0'], meta['edge1']])
     mesh = [len(e)-1 for e in edges]; nnr = np.prod(mesh)
     rvecs = bin_centers(edges)@cell/rs
@@ -170,6 +187,24 @@ def main():
     ny = 4
     fig = plt.figure(figsize=(nspin*ny+1, ny))
     axl = show_rhos(fig, rvecs, rhoms, args.colorbar)
+    for ax in axl:
+      ax.set_xlabel(r'$x/r_s$')
+      ax.set_ylabel(r'$y/r_s$')
+  elif obs_type == 'mdens':  # magnetization density
+    try:
+      prefix_dens = prefix.replace('mdens', 'dens')
+      meta_rho, rhoms, rhoes = obs.load_obs(prefix_dens)
+      rhom = rhoms.sum(axis=0)/nelec
+    except:
+      rhom = None
+    # interpret
+    magm, mage = ym[0], ye[0]
+    edges = np.asarray([meta['edge0'], meta['edge1']])
+    mesh = [len(e)-1 for e in edges]; nnr = np.prod(mesh)
+    rvecs = bin_centers(edges)@cell/rs
+    # visualize
+    fig = plt.figure(figsize=(12, 12))
+    axl = show_mags(fig, rvecs, magm, rhom=rhom, colorbar=args.colorbar)
     for ax in axl:
       ax.set_xlabel(r'$x/r_s$')
       ax.set_ylabel(r'$y/r_s$')

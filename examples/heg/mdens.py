@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 import os
-import numpy as np
-import jax
 import jax.numpy as jnp
 from importlib import import_module
 from typing import Callable
@@ -27,16 +25,9 @@ def main():
     parser.add_argument('--get_config', type=str, default='config.get_config',
         help="extract ansatz from config; get_config(nelec: int, rs: float)")
     parser.add_argument('--fchk', type=str, default='checkpoint.pkl')
-    parser.add_argument('--tx', type=float, default=0.0)
-    parser.add_argument('--ty', type=float, default=0.0)
-    parser.add_argument('--kcut', type=float)
-    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--nx', '-n', type=int, default=48)
     args = parser.parse_args()
-    nbatch = args.batch_size  # reduce to save memory
     fchk = args.fchk
-    kcut = args.kcut
-    twist = jnp.array([args.tx, args.ty])
-    key = jax.random.PRNGKey(args.seed)
 
     # set up folder to cache results
     tname = os.path.basename(args.ftraj)
@@ -46,6 +37,7 @@ def main():
     meta_sys = obs.read_meta(args.fyml)
     cell = jnp.asarray(meta_sys['system']['cell'])
     nelec = meta_sys['system']['nelec']
+    print('nelec = ', nelec)
     spins = meta_sys['system']['spins']
     print('spins = ', spins)
     meta_sys = dict(spins=list(spins), cell=cell.tolist())
@@ -53,15 +45,14 @@ def main():
     # derived metadata
     ndim = len(cell)
     rs = heg_rs(cell, nelec)
-    if kcut is None:
-        nspin = len(spins)
-        kf = 2./rs/nspin**0.5
-        kcut = 4*kf
 
     # read trajectories
-    traj = obs.read_traj(args.ftraj, ndim)
+    traj, straj = obs.read_traj(args.ftraj, ndim, nelec)
+    niter, nwalker, nelec, ndim = traj.shape
     print('initial: ', traj.shape)
     traj = obs.reshape_traj(traj[args.iter:args.jter],
+        args.batch_size, max_batch=args.max_batch)
+    straj = obs.reshape_traj(straj[args.iter:args.jter],
         args.batch_size, max_batch=args.max_batch)
     print('reshape: ', traj.shape)
 
@@ -72,11 +63,15 @@ def main():
     params = load_pickle(fchk)[1]
 
     # calculate observables
-    calc_nofk = obs.gen_calc_nofk(cell, kcut, twist, nelec, ansatz, params, key)
-    meta_nofk, nkm, nke = obs.calc_obs(traj, calc_nofk)
-    meta = dict(aname='nofk', kvecs=meta_nofk['kvecs'].tolist())
+    bins = (args.nx,)*ndim
+    calc_mdens = obs.gen_calc_mdens(cell, bins, ansatz, params)
+    meta_mdens, ym, ye = obs.calc_obs((traj, straj), calc_mdens)
+    edges = meta_mdens['edges']
+    meta = dict(aname='mdens')
     meta.update(meta_sys)
-    obs.save_obs('%s/nofk' % cache_dir, meta, nkm, nke)
+    for i, e in enumerate(edges):
+        meta['edge%d' % i] = e.tolist()
+    obs.save_obs('%s/mdens' % cache_dir, meta, ym, ye)
 
 if __name__ == '__main__':
      main()  # set no global variable

@@ -30,14 +30,8 @@ def rwsc(axes, dn=2):
     return rimg/2.
 
 def main():
-    from argparse import ArgumentParser
-    parser = ArgumentParser()
-    parser.add_argument('ftraj', type=str)
-    parser.add_argument('--fyml', type=str, default='hparams.yaml')
-    parser.add_argument('--iter', '-i', type=int, default=0)
-    parser.add_argument('--jter', '-j', type=int, default=None)
+    parser = obs.default_argparse(max_batch=None)
     parser.add_argument('--nx', '-n', type=int, default=48)
-    parser.add_argument('--verbose', '-v', action='store_true')
     parser.add_argument('--spinor', '-s', action='store_true')
     args = parser.parse_args()
 
@@ -61,11 +55,11 @@ def main():
     ndim = len(cell)
 
     # read trajectories
-    traj = obs.read_traj(args.ftraj, ndim, nelec)[args.iter:args.jter]
-    niter, nwalker, nelec, ndim = traj.shape
-    if niter < 4:  # !!!! HACK: split walkers for errorbar
-        niter = 4
-        traj = traj.reshape(niter, -1, nelec, ndim)
+    traj, straj = obs.read_traj(args.ftraj, ndim, nelec)
+    print('initial: ', traj.shape)
+    traj = obs.reshape_traj(traj[args.iter:args.jter],
+        args.batch_size, max_batch=args.max_batch)
+    print('reshape: ', traj.shape)
 
     # calculate observables
 
