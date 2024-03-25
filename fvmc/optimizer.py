@@ -172,11 +172,8 @@ class OptaxWrapper:
         new_params = optax.apply_updates(params, updates)
 
         # Add step and batch size info
-        if isinstance(new_state, optax.InjectHyperparamsState):
-            stats["step"] = new_state.count
-            stats["learning_rate"] = new_state.hyperparams["learning_rate"]
-        else:
-            stats["step"] = stats["learning_rate"] = -1
+        stats["step"] = getattr(new_state, "count", -1)
+        stats["learning_rate"] = getattr(new_state, "hyperparams", {}).get("learning_rate", -1)
         batch_size = jax.tree_util.tree_leaves(batch)[0].shape[0]
         stats["batch_size"] = batch_size * jax.device_count()
         stats["data_seen"] = stats["batch_size"] * stats["step"]
