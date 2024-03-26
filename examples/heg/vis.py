@@ -251,6 +251,13 @@ def main():
     # interpret
     gvms, gves = spin_split(spins, ym, ye)
     gvm, gve = spin_sum(gvms, gves)  # total
+    if args.spin_sum:
+      nspin = 1
+      gvms = gvm[None]
+      gves = gve[None]
+    else:  # transform (up-up, up-dn) to (c-c, s-s)
+      gvms = np.array([gvm, gvms[0]-gvms[1]])
+      gves = np.array([gve, (gves[0]**2+gves[1]**2)**0.5])
     edges = np.asarray([meta['edge0'], meta['edge1']])
     mesh = [len(e)-1 for e in edges]; nnr = np.prod(mesh)
     rvecs = bin_centers(edges)@cell/rs
@@ -271,8 +278,8 @@ def main():
     #   difference
     if nspin > 1:
       ax = axl[1]
-      dgvm = gvms[0]-gvms[1]  # difference
-      dgve = (gves[0]**2+gves[1]**2)**0.5
+      dgvm = gvms[1]
+      dgve = gves[1]
       smax = max(dgvm.max(), abs(dgvm.min()))
       zlim = (-smax, smax)
       cs = contour_scatter(ax, rvecs, dgvm.ravel(), mesh=mesh, zlim=zlim, cmap='coolwarm')
