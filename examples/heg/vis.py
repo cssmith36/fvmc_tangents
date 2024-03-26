@@ -17,7 +17,7 @@ def spin_split(spins, yms, yes):
     nspin = len(spins)
     if nspin == 1:  # no spin to split
       return yms, yes
-    npair, ngrid = yms.shape
+    npair = len(yms)
     # !!!! hard-code for up dn
     if npair == (nspin+1)*nspin//2:
       same_diff_mean = np.array([yms[0]+yms[2], 2*yms[1]])
@@ -249,7 +249,7 @@ def main():
       ax.errorbar(x, grm, gre)
   elif obs_type == 'vecgofr':
     # interpret
-    gvms, gves = ym, ye
+    gvms, gves = spin_split(spins, ym, ye)
     gvm, gve = spin_sum(gvms, gves)  # total
     edges = np.asarray([meta['edge0'], meta['edge1']])
     mesh = [len(e)-1 for e in edges]; nnr = np.prod(mesh)
@@ -276,7 +276,7 @@ def main():
       smax = max(dgvm.max(), abs(dgvm.min()))
       zlim = (-smax, smax)
       cs = contour_scatter(ax, rvecs, dgvm.ravel(), mesh=mesh, zlim=zlim, cmap='coolwarm')
-    if args.colorbar: plt.colorbar(cs)
+      if args.colorbar: plt.colorbar(cs)
   elif obs_type in ['sofk', 'dsk', 'rhok']:
     # interpret
     skms, skes = spin_split(spins, ym, ye)
