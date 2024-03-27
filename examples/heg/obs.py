@@ -83,7 +83,8 @@ def main():
     meta_gofr, grms, gres = obs.calc_obs(traj, calc_gofr)
     #   save with processed metadata
     r = meta_gofr['r']
-    meta = dict(aname='gofr', r=r.tolist())
+    normalize=meta_gofr['normalize'].item()
+    meta = dict(aname='gofr', r=r.tolist(), normalize=normalize)
     meta.update(meta_sys)
     obs.save_obs('%s/gofr' % cache_dir, meta, grms, gres)
 

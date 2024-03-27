@@ -241,20 +241,23 @@ def gen_calc_pair_hist(cell: Array, spins: Tuple[int], bins: Tuple[int]) -> Call
     return calc_pair_hist
 
 
-def gen_calc_gofr(cell: Array, spins: Tuple[int], bins: int, rcut: float) -> Callable:
-    edges = np.arange(0, rcut+rcut/bins/2, rcut/bins)
+def gen_calc_gofr(
+    cell: Array, spins: Tuple[int],
+    bins: int, rcut: float, normalize: bool = True
+) -> Callable:
+    edges = np.arange(0, rcut + rcut / bins / 2, rcut / bins)
     disp_fn = gen_pbc_disp_fn(cell)
     norms = []
     for ii, ni in enumerate(spins):
         for jj, nj in enumerate(spins[ii:], start=ii):
             n2 = None if ii == jj else nj
             gr_norm = gofr_norm(cell, edges, ni, n2=n2)
-            norms.append(gr_norm / 2)  # !!!! HACK: why /2?
+            norms.append(gr_norm / 2 if normalize else 1)  # !!!! HACK: why /2?
 
     @jax.jit
     def calc_gofr(walker: Array):
         dist = jax.vmap(partial(pdist, disp_fn=disp_fn))(walker)  # [-1, nelec, nelec]
-        dist = dist[:, :, :, None]/rcut # [-1, nelec, nelec, ndim]
+        dist = dist[:, :, :, None] / rcut # [-1, nelec, nelec, ndim]
         nsample = len(dist)
         # count
         hists, edges = histogram_spin_blocks(dist, bins, spins, (0, 1))
@@ -264,9 +267,9 @@ def gen_calc_gofr(cell: Array, spins: Tuple[int], bins: int, rcut: float) -> Cal
         # normalize
         res = []
         for hist, norm in zip(hists, norms):
-          gr = hist.at[0].set(0) * norm / nsample
-          res.append(gr)
-        return res, dict(r=r)
+            gr = hist.at[0].set(0) * norm / nsample
+            res.append(gr)
+        return res, dict(r=r, normalize=normalize)
 
     return calc_gofr
 
