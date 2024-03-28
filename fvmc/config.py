@@ -23,6 +23,7 @@ def default() -> ConfigDict:
             "elems": [1., 1.],
             "charge": 0,
             "spin": None,
+            "cell": None,
         },
 
         #TODO make a default ansatz parameters
@@ -37,10 +38,12 @@ def default() -> ConfigDict:
             "mala": {},
             "hmc": {},
             "black": {},
+            "adaptive": None,
         },
 
         "loss": {
             "ke_kwargs": {},
+            "pe_kwargs": {},
             "mini_batch": None,
             "energy_clipping": 5.,
             "center_shifting": True,
@@ -67,7 +70,7 @@ def default() -> ConfigDict:
             "dump_every": 0, # change to positive number to dump
             "dump_keep": 2, # only back up once, avoid clutter
             "hpar_path": "hparams.yaml",
-            "use_tensorboard": True,
+            "use_tensorboard": False,
             "tracker_path": "tbdata/",
         },
 
