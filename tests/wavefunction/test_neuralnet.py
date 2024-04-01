@@ -33,7 +33,6 @@ _conf3 = {"full_det": True,
 
 @pytest.fixture(scope='module', params=[_conf1, _conf2, _conf3])
 def model_data(request):
-    print(request.param)
     r, elems, x = make_collapse_conf()
     x = x[0]
     x = x + jax.random.normal(_key0, x.shape)
