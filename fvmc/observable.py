@@ -109,7 +109,7 @@ def reshape_traj(traj: Array, batch_size:int, max_batch:int=None):
     nleft = ntot % batch_size
     nevery = nbatch // max_batch
     flat_traj = traj.reshape(-1, *conf_shape)[nleft:]
-    return flat_traj[::nevery].reshape(-1, batch_size, *conf_shape)
+    return flat_traj.reshape(-1, batch_size, *conf_shape)[::nevery][:max_batch]
 
 
 def calc_obs(traj: ElecConf, calc_func: Callable, *args, **kwargs):
