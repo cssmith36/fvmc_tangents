@@ -59,7 +59,7 @@ def main():
         kcut = 4*kf
 
     # read trajectories
-    traj = obs.read_traj(args.ftraj, ndim)
+    traj, straj = obs.read_traj(args.ftraj, ndim, nelec)
     print('initial: ', traj.shape)
     traj = obs.reshape_traj(traj[args.iter:args.jter],
         args.batch_size, max_batch=args.max_batch)
