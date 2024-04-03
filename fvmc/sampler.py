@@ -3,7 +3,7 @@ from functools import partial
 from typing import Callable, Dict, NamedTuple, Tuple, Union, Optional
 
 import jax
-import numpy as onp
+import numpy as np
 from jax import lax
 from jax import numpy as jnp
 from jax.flatten_util import ravel_pytree
@@ -88,7 +88,7 @@ def choose_adaptive_builder(name: str,
 
 
 def build_sampler(log_prob_fn: Callable[[Params, Sample], Array],
-                  shape_or_init: Union[tuple, onp.ndarray, callable],
+                  shape_or_init: Union[tuple, np.ndarray, callable],
                   name: str,
                   adaptive: Union[None, bool, dict] = None,
                   beta: float = 1,
@@ -564,7 +564,7 @@ def _extract_sample_shape(shape_or_init):
         else: # is init function
             _dummy_key = jax.random.PRNGKey(0)
             init_sample = shape_or_init(_dummy_key)
-            sample_shape = jax.tree_map(lambda a: onp.array(a.shape), init_sample)
+            sample_shape = jax.tree_map(lambda a: np.array(a.shape), init_sample)
     return sample_shape
 
 

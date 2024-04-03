@@ -3,7 +3,7 @@ from dataclasses import field as _field
 from typing import Callable, Optional, Sequence, Tuple, Union
 
 import jax
-import numpy as onp
+import numpy as np
 from flax import linen as nn
 from jax import numpy as jnp
 
@@ -107,7 +107,7 @@ class PlanewaveOrbital(nn.Module):
         with jax.ensure_compile_time_eval():
             n_elec, n_dim = x.shape
             assert sum(self.spins) == n_elec
-            split_idx = onp.cumsum(self.spins)[:-1]
+            split_idx = np.cumsum(self.spins)[:-1]
             raw_n_k = self.n_k or n_elec
             recvec = jnp.linalg.inv(self.cell).T
             # this will take the desired k-points rounded up to a closed shell
@@ -154,7 +154,7 @@ def _get_fulldet_spin_symm_index(spins):
     with jax.ensure_compile_time_eval():
         flat_idx = jnp.arange(n_elec * n_orb * n_comp, dtype=int)
         raw_idx = flat_idx.reshape(n_elec, n_orb, n_comp)
-        splited = jnp.split(raw_idx, onp.cumsum(spins)[:-1], axis=0)
+        splited = jnp.split(raw_idx, np.cumsum(spins)[:-1], axis=0)
         rolled = jnp.concatenate(
             [jnp.roll(x, i, axis=-1) for i, x in enumerate(splited)], axis=0)
         columns = [rolled[:, :n_si, i] for i, n_si in enumerate(spins)]
@@ -203,7 +203,7 @@ def jastrow_CCK(r, jb, jd, cusp):
 
 def block_diagonal_masks(spins: Sequence[int], n_elec: int, triu: bool) -> Tuple[Array]:
     assert sum(spins) == n_elec
-    cum_idx = onp.cumsum([0, *spins])
+    cum_idx = np.cumsum([0, *spins])
     offdiag_mask = jnp.ones((n_elec, n_elec), dtype=bool)
     for i, j in zip(cum_idx[:-1], cum_idx[1:]):
         offdiag_mask = offdiag_mask.at[i:j, i:j].set(False)

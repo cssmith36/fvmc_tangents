@@ -4,7 +4,7 @@ from typing import NamedTuple, Optional, Sequence, Tuple
 
 import jax
 import kfac_jax
-import numpy as onp
+import numpy as np
 from flax import linen as nn
 from jax import numpy as jnp
 from ml_collections import ConfigDict
@@ -345,7 +345,7 @@ def run(step_fn, train_state, iterations, log_cfg):
             stat_dict = {k: v[0] if jnp.ndim(v) > 0 else v # collect from potential pmap
                          for k, v in stat_dict.items()}
             printer.print_fields(stat_dict)
-            onp.savetxt(writer, onp.array(list(stat_dict.values())).reshape(1,-1),
+            np.savetxt(writer, np.array(list(stat_dict.values())).reshape(1,-1),
                         header=" ".join(stat_dict.keys()) if ii == 0 else "")
             if use_tensorboard:
                 for k,v in stat_dict.items():
@@ -355,8 +355,8 @@ def run(step_fn, train_state, iterations, log_cfg):
         # dump traj
         if dumper is not None and ii % log_cfg.dump_every == 0:
             sconf, slogw = sample_data
-            flat_conf = onp.concatenate([
-                onp.asarray(sc).reshape(slogw.size, -1)
+            flat_conf = np.concatenate([
+                np.asarray(sc).reshape(slogw.size, -1)
                 for sc in jax.tree_util.tree_leaves(sconf)
             ], axis=-1)[None]
             dumper.append(flat_conf) # [n_step, n_batch, n_coord]

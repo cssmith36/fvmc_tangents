@@ -3,7 +3,7 @@ from functools import partial
 from typing import Callable, Sequence, Tuple
 
 import jax
-import numpy as onp
+import numpy as np
 from flax import linen as nn
 from jax import numpy as jnp
 
@@ -43,13 +43,13 @@ def raw_features(r, x):
 
 
 def aggregate_features(h1, h2, split_sec, spin_symmetry):
-    split_sec = onp.asarray(split_sec)
+    split_sec = np.asarray(split_sec)
     assert split_sec.ndim == 1 and len(split_sec) >= 2
     # last two sections are electrons with spin up and down
     *elem_sec, n_up, n_dn = split_sec
     n_particle = sum(split_sec)
     assert n_particle == h1.shape[0] == h2.shape[0] == h2.shape[1]
-    split_idx = onp.cumsum(split_sec)[:-1]
+    split_idx = np.cumsum(split_sec)[:-1]
     # global input
     h1_mean = jnp.tile(jnp.stack([
         h1_sec.mean(axis=0)
@@ -133,7 +133,7 @@ class FermiLayer(nn.Module):
         n_nucl = sum(elem_sec)
         slc_nucl, slc_elec = slice(0, n_nucl), slice(n_nucl, n_particle)
         slc_up, slc_dn = slice(n_nucl, n_nucl+n_up), slice(n_nucl+n_up, n_particle)
-        pair_type = onp.zeros((n_particle, n_particle), int)
+        pair_type = np.zeros((n_particle, n_particle), int)
         pair_type[slc_nucl, slc_elec] = pair_type[slc_elec, slc_nucl] = 1
         pair_type[slc_up, slc_up] = pair_type[slc_dn, slc_dn] = 2
         pair_type[slc_up, slc_dn] = pair_type[slc_dn, slc_up] = 3
@@ -270,7 +270,7 @@ class FermiNet(FullWfn):
         n_up, n_dn = self.spins
         assert sum(elem_sec) == n_nucl
         assert n_up + n_dn == n_elec
-        split_sec = onp.asarray([*elem_sec, n_up, n_dn])
+        split_sec = np.asarray([*elem_sec, n_up, n_dn])
 
         h1, h2, dmat = raw_features(r, x)
         if self.type_embedding > 0:

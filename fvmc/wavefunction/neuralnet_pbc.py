@@ -2,7 +2,7 @@ import dataclasses
 from typing import Optional, Sequence, Tuple
 
 import jax
-import numpy as onp
+import numpy as np
 from flax import linen as nn
 from jax import numpy as jnp
 
@@ -207,7 +207,7 @@ class FermiNetPbc(FullWfn):
         n_up, n_dn = self.spins
         assert sum(elem_sec) == n_nucl
         assert n_up + n_dn == n_elec
-        split_sec = onp.asarray([*elem_sec, n_up, n_dn])
+        split_sec = np.asarray([*elem_sec, n_up, n_dn])
 
         h1, h2, dmat = raw_features_pbc(r, x, self.cell, self.raw_freq)
         if self.type_embedding > 0:

@@ -7,7 +7,7 @@ from functools import partial, reduce
 from typing import Any, Callable, Dict, Optional, Sequence, Union, Tuple
 
 import jax
-import numpy as onp
+import numpy as np
 from jax import lax
 from jax import numpy as jnp
 from jax import scipy as jsp
@@ -221,12 +221,12 @@ def cdist(xa, xb, disp_fn=None):
 def gen_kidx(n_d, n_k, close_shell=True):
     # n_d is spacial dimension
     # n_k is number of k points
-    n_max = int(onp.ceil((n_k/2) ** (1/n_d)))
-    grid = onp.arange(-n_max, n_max+1, dtype=int)
-    mesh = onp.stack(onp.meshgrid(*([grid] * n_d), indexing='ij'), axis=-1)
+    n_max = int(np.ceil((n_k/2) ** (1/n_d)))
+    grid = np.arange(-n_max, n_max+1, dtype=int)
+    mesh = np.stack(np.meshgrid(*([grid] * n_d), indexing='ij'), axis=-1)
     kall = mesh.reshape(-1, n_d)
     k2 = (kall ** 2).sum(-1)
-    sidx = onp.lexsort((*kall.T[::-1], k2))
+    sidx = np.lexsort((*kall.T[::-1], k2))
     if not close_shell:
         return kall[sidx[:n_k]]
     else:
@@ -238,9 +238,9 @@ def gen_kvecs(recvec: Array, mesh: Sequence[int]) -> Array:
     """Regular grid centered around 0"""
     ndim = len(recvec)
     assert len(mesh) == ndim
-    spaces = [onp.fft.fftfreq(nx)*nx for nx in mesh]
-    kidx = onp.stack(
-        onp.meshgrid(*spaces, indexing='ij'), axis=-1
+    spaces = [np.fft.fftfreq(nx)*nx for nx in mesh]
+    kidx = np.stack(
+        np.meshgrid(*spaces, indexing='ij'), axis=-1
     ).reshape(-1, ndim)
     return kidx @ recvec
 
@@ -252,7 +252,7 @@ def guess_kmesh(recvec: Array, kcut: float) -> Sequence[int]:
     kpts = pts @ recvec
     # determine maximum number of shells needed to reach kcut
     kmags = jnp.linalg.norm(kpts[1:], axis=-1)
-    nmax = onp.ceil(kcut/kmags).astype(int).max()
+    nmax = np.ceil(kcut/kmags).astype(int).max()
     kmesh = (2*nmax,)*ndim
     return kmesh
 
@@ -407,7 +407,7 @@ def cfg_to_yaml(cfg):
             'tag:yaml.org,2002:map', data, False))
     cdict = cfg_to_dict(cfg)
     def convert_obj(obj):
-        if isinstance(obj, (Array, onp.ndarray)):
+        if isinstance(obj, (Array, np.ndarray)):
             return obj.tolist()
         from datetime import datetime
         yaml_type = (type(None), bool, int, float, complex, str, bytes,
@@ -467,22 +467,22 @@ def ensure_spin(x: ElecConf) -> ElecConf:
 
 
 def collect_elems(elems):
-    elems = onp.asarray(elems)
-    assert elems.ndim == 1 and onp.all(onp.diff(elems) >= 0)
-    uelems, counts = onp.unique(elems, return_counts=True)
-    assert onp.all(onp.repeat(uelems, counts) == elems)
+    elems = np.asarray(elems)
+    assert elems.ndim == 1 and np.all(np.diff(elems) >= 0)
+    uelems, counts = np.unique(elems, return_counts=True)
+    assert np.all(np.repeat(uelems, counts) == elems)
     return uelems, counts
 
 
 def replicate_cell(pos, cell, copies):
-    pos, cell, copies = list(map(onp.asarray, (pos, cell, copies)))
+    pos, cell, copies = list(map(np.asarray, (pos, cell, copies)))
     assert pos.ndim == cell.ndim == 2
     assert pos.shape[-1] == cell.shape[0] == cell.shape[1] == len(copies)
     n_d = pos.shape[-1]
-    XYZ = jnp.meshgrid(*[onp.arange(0, n_c) for n_c in copies], indexing="ij")
+    XYZ = jnp.meshgrid(*[np.arange(0, n_c) for n_c in copies], indexing="ij")
     xyz = jnp.stack(XYZ, axis=-1).reshape((-1, 1, n_d))
     disp = xyz @ cell
-    return (pos + disp).reshape(-1, n_d), onp.diag(copies) @ cell
+    return (pos + disp).reshape(-1, n_d), np.diag(copies) @ cell
 
 
 def adaptive_residual(x, y, rescale=False):
@@ -667,7 +667,7 @@ PAXIS = PmapAxis(PMAP_AXIS_NAME)
 PROTON_MASS = 1836.152673
 
 # copied from PySCF
-ISOTOPE_MAIN = onp.array([
+ISOTOPE_MAIN = np.array([
     0  ,   # GHOST
     1  ,   # H
     4  ,   # He
