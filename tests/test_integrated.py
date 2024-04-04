@@ -107,12 +107,13 @@ def get_heg_cfg():
     cfg.loss.energy_clipping = 5.
     cfg.loss.clip_from_median = True
     cfg.loss.ke_kwargs.forward_mode = True
-    cfg.loss.ke_kwargs.partition_size = 4
+    cfg.loss.ke_kwargs.partition_size = 1
     # <optimize>
     cfg.optimize.iterations = 10
     cfg.optimize.optimizer = 'sr'
     cfg.optimize.lr.base = 1.
     cfg.optimize.lr.decay_time = 10
+    cfg.optimize.lr.warmup_steps = 5
     cfg.optimize.sr.max_norm = 1.
     cfg.optimize.sr.proximal = 0.9
     # <output>

@@ -212,10 +212,10 @@ class OptaxWrapper:
 
 
 def build_lr_schedule(base=1e-4, decay_time=1e4, decay_power=1., warmup_steps=0):
-    if decay_power is None or decay_time is None:
-        return lambda t: base
     def decay_schedule(t):
         return base * jnp.power((1.0 / (1.0 + (t/decay_time))), decay_power)
+    if decay_power is None or decay_time is None:
+        decay_schedule = lambda t: base # noqa: F811
     if not warmup_steps:
         return decay_schedule
     warmup_schedule = optax.linear_schedule(0.1 * base, base, warmup_steps)
