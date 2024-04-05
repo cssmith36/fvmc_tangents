@@ -32,7 +32,6 @@ def main():
     parser.add_argument('--kcut', type=float)
     parser.add_argument('--seed', type=int, default=42)
     args = parser.parse_args()
-    nbatch = args.batch_size  # reduce to save memory
     fchk = args.fchk
     kcut = args.kcut
     twist = jnp.array([args.tx, args.ty])

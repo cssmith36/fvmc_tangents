@@ -22,7 +22,7 @@ Typical usage:
 """
 
 from functools import partial
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Literal
 
 import jax
 import numpy as np
@@ -175,16 +175,19 @@ def gen_calc_dens(cell: Array, spins: Tuple[int], bins: Tuple[int]):
 
 @partial(jax.jit, static_argnames=('bins', 'spins'))
 def calc_dens(walker: Array, cell: Array, spins: Tuple[int], bins: Tuple[int]):
-    nnr = np.prod(bins)
+    # normalized so that the integral of rho is the number of particles
+    # numerically, sum(hist * bin_vol) = n_elec
     nsample, nelec, ndim = walker.shape
+    hrange = [(0, 1)] * ndim
+    bin_vol = np.prod(np.diff(hrange, axis=-1)) / np.prod(bins)
     split_idx = np.cumsum((spins))[:-1]
     invvec = jnp.linalg.inv(cell)
     walker_split = jnp.split(walker, split_idx, axis=-2)
     res = []
     for ws in walker_split:
         fracs = jnp.dot(ws.reshape(-1, ndim), invvec) % 1
-        hist, edges = jnp.histogramdd(fracs, bins=bins, range=[(0, 1)]*ndim)
-        res.append(hist * nnr / nsample)
+        hist, edges = jnp.histogramdd(fracs, bins=bins, range=hrange)
+        res.append(hist / nsample / bin_vol)
     return res, dict(edges=edges)
 
 
@@ -216,7 +219,7 @@ def gen_calc_sofk(cell: Array, spins: Tuple[int], kcut: float) -> Callable:
             res.append(rkm)
         for ii, rhoki in enumerate(rhoks):
             for _, rhokj in enumerate(rhoks[ii:], start=ii):
-                sofk = (rhoki * rhokj.conj())  # symmetrize i j?
+                sofk = (rhoki * rhokj.conj()).real # real means symmetrize ij
                 res.append(sofk.mean(axis=-1))
         return res, dict(kvecs=kvecs)
 
@@ -225,71 +228,90 @@ def gen_calc_sofk(cell: Array, spins: Tuple[int], kcut: float) -> Callable:
 
 # =============================== gofr ==============================
 
-def gen_calc_pair_hist(cell: Array, spins: Tuple[int], bins: Tuple[int]) -> Callable:
+def gen_calc_vecgofr(
+        cell: Array, spins: Tuple[int], bins: Tuple[int],
+        normalize: Literal["spin", "charge"] = "spin"
+) -> Callable:
+    # normalized so that for uncorrelated particles this is one
+    # `normalize = 'spin'` means each spin species is normalized separately
+    # `normalize = 'charge'` means all particles are normalized together
+    nelec = sum(spins)
     disp_fn = gen_pbc_disp_fn(cell)
     invvec = jnp.linalg.inv(cell)
+    hlim = (-0.5, 0.5)
+    bin_vol = np.prod(np.diff(hlim, axis=-1) / bins)
+    norms = []
+    for ii, ni in enumerate(spins):
+        for jj, nj in enumerate(spins[ii:], start=ii):
+            npair = {"spin": ni * (ni - 1) if ii == jj else 2 * ni * nj,
+                     "charge": nelec * (nelec - 1)}[normalize]
+            norms.append(1 / (bin_vol * npair))
 
     @jax.jit
-    def calc_pair_hist(walker: Array):
+    def calc_vecgofr(walker: Array):
         disp = jax.vmap(partial(displace_matrix, disp_fn=disp_fn))(walker, walker)
         disp = disp @ invvec
         nsample = len(disp)
         hists, edges = histogram_spin_blocks(disp, bins, spins, (-0.5, 0.5))
-        res = [h / nsample for h in hists]
+        res = [h * n / nsample for h, n in zip(hists, norms)]
         return res, dict(edges=edges)
 
-    return calc_pair_hist
+    return calc_vecgofr
 
 
 def gen_calc_gofr(
-    cell: Array, spins: Tuple[int],
-    bins: int, rcut: float, normalize: bool = True
+        cell: Array, spins: Tuple[int],
+        bins: int, rcut: float,
+        normalize: Literal["spin", "charge"] = "spin"
 ) -> Callable:
-    edges = np.arange(0, rcut + rcut / bins / 2, rcut / bins)
+    # normalized so that for uncorrelated particles this is one
+    # `normalize = 'spin'` means each spin species is normalized separately
+    # `normalize = 'charge'` means all particles are normalized together
+    nelec = sum(spins)
+    edges = np.histogram_bin_edges([0], bins, (0, rcut))
     disp_fn = gen_pbc_disp_fn(cell)
+    gr_factor = gofr_norm_factor(cell, edges)
     norms = []
     for ii, ni in enumerate(spins):
         for jj, nj in enumerate(spins[ii:], start=ii):
-            n2 = None if ii == jj else nj
-            gr_norm = gofr_norm(cell, edges, ni, n2=n2)
-            norms.append(gr_norm / 2 if normalize else 1)  # !!!! HACK: why /2?
+            npair = {"spin": ni * (ni - 1) if ii == jj else 2 * ni * nj,
+                     "charge": nelec * (nelec - 1)}[normalize]
+            norms.append(gr_factor / npair)
 
     @jax.jit
     def calc_gofr(walker: Array):
         dist = jax.vmap(partial(pdist, disp_fn=disp_fn))(walker)  # [-1, nelec, nelec]
-        dist = dist[:, :, :, None] / rcut # [-1, nelec, nelec, ndim]
-        nsample = len(dist)
+        dist = dist[:, :, :, None] # [-1, nelec, nelec, ndim]
+        nsample = dist.shape[0]
         # count
-        hists, edges = histogram_spin_blocks(dist, bins, spins, (0, 1))
+        hists, edges = histogram_spin_blocks(dist, bins, spins, (0, rcut))
         # grid
-        e = jnp.asarray(edges[0]) * rcut
+        e = jnp.asarray(edges[0])
         r = 0.5 * (e[1:] + e[:-1])
         # normalize
         res = []
         for hist, norm in zip(hists, norms):
             gr = hist.at[0].set(0) * norm / nsample
             res.append(gr)
-        return res, dict(r=r, normalize=normalize)
+        return res, dict(r=r)
 
     return calc_gofr
 
 
-def gofr_norm(cell: Array, bin_edges: Array, n1: int, n2: int=None) -> Array:
-    n2 = n2 if n2 else n1-1
+def gofr_norm_factor(cell: Array, bin_edges: Array) -> Array:
+    r"""V / (4 \pi r^2 dr) for 3D, V / (2 \pi r dr) for 2D"""
     ndim, ndim = cell.shape
-    # calculate volume of bins
+    # calculate shell volume of bins
     vnorm = np.diff(2 * (ndim-1) / ndim * np.pi * bin_edges**ndim)
-    # calculate density normalization
-    npair = n1 * n2 / 2
+    # total cell volume V
     volume = np.abs(np.linalg.det(cell))
-    rho = npair / volume
-    # assemble the norm vector
-    gr_norm = 1. / (rho * vnorm)
-    return gr_norm
+    return volume / vnorm
 
 
-def histogram_spin_blocks(dis: list[list[Array]], bins: Tuple[int],
-    spins: Tuple[int], xlim: Tuple[float]) -> Tuple[list, Array]:
+def histogram_spin_blocks(
+        dis: Array, bins: Tuple[int],
+        spins: Tuple[int], xlim: Tuple[float]
+) -> Tuple[list, Array]:
     ndim = dis.shape[-1]
     # split displacement or distnaces by spins
     split_idx = np.cumsum((spins))[:-1]
@@ -303,9 +325,12 @@ def histogram_spin_blocks(dis: list[list[Array]], bins: Tuple[int],
             if ii == jj:
                 with jax.ensure_compile_time_eval():
                     mask = ~jnp.eye(nj, dtype=bool)
-                dblock = dblock[:, mask]
-            dblock = dblock.reshape(-1, ndim)
-            hist, edges = jnp.histogramdd(dblock, bins=bins, range=[xlim]*ndim)
+                dflat = dblock[:, mask].reshape(-1, ndim)
+            else:
+                dblock_t = dis_block[jj][ii]
+                dflat = jnp.concatenate([dblock.reshape(-1, ndim),
+                                         dblock_t.reshape(-1, ndim)], axis=0)
+            hist, edges = jnp.histogramdd(dflat, bins=bins, range=[xlim] * ndim)
             res.append(hist)
     return res, edges
 
@@ -313,8 +338,8 @@ def histogram_spin_blocks(dis: list[list[Array]], bins: Tuple[int],
 # =============================== nofk ==============================
 
 def gen_calc_nofk(
-    cell: Array, kcut: float, twist: Array, n_elec: int,
-    ansatz, params: ArrayTree, key: Array, n_samp: int = 32,
+        cell: Array, kcut: float, twist: Array, n_elec: int,
+        ansatz, params: ArrayTree, key: Array, n_samp: int = 32,
 ) -> Callable:
     n_dim = cell.shape[-1]
     # mask to make new snapshots, each with one electron moved
@@ -366,8 +391,8 @@ def paulis(s1, si):
     return sx, sy, sz
 
 def gen_calc_mdens(
-    cell: Array, bins: Tuple[int],
-    ansatz, params: ArrayTree
+        cell: Array, bins: Tuple[int],
+        ansatz, params: ArrayTree
 ) -> Callable:
     # prepare to calculate fractional coordinates
     invvec = jnp.linalg.inv(cell)

@@ -77,22 +77,22 @@ def main():
     obs.save_obs('%s/dens' % cache_dir, meta, rhoms, rhoes)
 
     #   pair correlation g(r)
+    gr_norm = "spin" # normalize by each spin species
     #   isotropic
     rcut = rwsc(cell)
-    calc_gofr = obs.gen_calc_gofr(cell, spins, nx, rcut)
+    calc_gofr = obs.gen_calc_gofr(cell, spins, nx, rcut, normalize=gr_norm)
     meta_gofr, grms, gres = obs.calc_obs(traj, calc_gofr)
     #   save with processed metadata
     r = meta_gofr['r']
-    normalize=meta_gofr['normalize'].item()
-    meta = dict(aname='gofr', r=r.tolist(), normalize=normalize)
+    meta = dict(aname='gofr', r=r.tolist(), normalize=gr_norm)
     meta.update(meta_sys)
     obs.save_obs('%s/gofr' % cache_dir, meta, grms, gres)
 
     #   vector
-    calc_pair_hist = obs.gen_calc_pair_hist(cell, spins, bins)
-    meta_gv, gvms, gves = obs.calc_obs(traj, calc_pair_hist)
+    calc_vecgofr = obs.gen_calc_vecgofr(cell, spins, bins, normalize=gr_norm)
+    meta_gv, gvms, gves = obs.calc_obs(traj, calc_vecgofr)
     #   save with processed metadata
-    meta = dict(aname='vecgofr')
+    meta = dict(aname='vecgofr', normalize=gr_norm)
     for i, e in enumerate(meta_gv['edges']):
       meta['edge%d' % i] = e.tolist()
     meta.update(meta_sys)
