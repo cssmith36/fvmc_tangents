@@ -4,7 +4,6 @@ from jax import numpy as jnp
 from jax.flatten_util import ravel_pytree
 
 from .utils import pdist, cdist, adaptive_grad
-from .utils import split_spin, attach_spin
 
 
 def calc_coulomb(charge, pos):
@@ -27,7 +26,6 @@ def calc_coulomb_2(charge_a, pos_a, charge_b, pos_b):
 def calc_pe(elems, r, x):
     # r is nuclei position
     # x is electron positions
-    x, _ = split_spin(x) # Coulomb is spin independent
     el_el = calc_coulomb(-1, x)
     el_ion = calc_coulomb_2(-1, x, elems, r)
     ion_ion = calc_coulomb(elems, r)
@@ -87,9 +85,8 @@ def laplacian_over_f(log_f, scale=None, forward_mode=False, partition_size=1):
 def calc_ke_elec(log_psi, x, *, forward_mode=False, partition_size=1):
     # calc -0.5 * (\nable^2 \psi) / \psi
     # handle batch of x automatically
-    x, s = split_spin(x)
     lapl_fn = laplacian_over_f(
-        lambda x: log_psi(attach_spin(x, s)),
+        log_psi,
         scale=None,
         forward_mode=forward_mode,
         partition_size=partition_size)
@@ -99,11 +96,10 @@ def calc_ke_elec(log_psi, x, *, forward_mode=False, partition_size=1):
 def calc_ke_full(log_psi, mass, r, x, *, forward_mode=False, partition_size=1):
     # calc -0.5 * (\nable^2 \psi) / \psi
     # handle batch of r, x automatically
-    x, s = split_spin(x)
     mass = jnp.reshape(mass, -1)
     minv = (jnp.repeat(1/mass, r.shape[-1]), jnp.ones(x.shape[-1] * x.shape[-2]))
     lapl_fn = laplacian_over_f(
-        lambda r, x: log_psi(r, attach_spin(x, s)),
+        log_psi,
         scale=minv,
         forward_mode=forward_mode,
         partition_size=partition_size)

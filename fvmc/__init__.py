@@ -20,6 +20,7 @@ __all__ = [
     "wavefunction",
     "config",
     "train",
+    "observable",
 ]
 
 def __getattr__(name):

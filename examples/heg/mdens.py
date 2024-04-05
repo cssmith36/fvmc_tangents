@@ -21,7 +21,7 @@ def import_function(path: str) -> Callable:
     return fn
 
 def main():
-    parser = obs.default_argparse()
+    parser = obs.default_argparse(6400)
     parser.add_argument('--get_config', type=str, default='config.get_config',
         help="extract ansatz from config; get_config(nelec: int, rs: float)")
     parser.add_argument('--fchk', type=str, default='checkpoint.pkl')

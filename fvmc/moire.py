@@ -1,5 +1,5 @@
 import jax.numpy as jnp
-from .utils import Array, ElecConf, split_spin
+from .utils import Array
 
 
 class OneShell:
@@ -50,9 +50,8 @@ class OneShell:
         cos_term = jnp.cos(kr+self.phi).sum(axis=0)
         return self.vm*2.0*cos_term
 
-    def calc_pe(self, x: ElecConf) -> float:
+    def calc_pe(self, x: Array) -> float:
         """calculate potential energy of electrons in moire potential"""
-        x, _ = split_spin(x)
         vals = self(x)
         return vals.sum()
 

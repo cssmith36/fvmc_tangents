@@ -383,84 +383,81 @@ def gen_calc_nofk(
 
 # =============================== mdens ==============================
 
-def paulis(s1, si):
-    r"""Project continuous spin to Pauli matrices <s1|\sigma|si>"""
-    sx = 2 * jnp.cos(s1 + si)
-    sy = 2 * jnp.sin(s1 + si)
-    sz = 2j * jnp.sin(s1 - si)
+def pauli_ss(s0, s1):
+    r"""Project continuous spin to Pauli matrices <s0|\sigma|s1>"""
+    sx = 2 * jnp.cos(s0 + s1)
+    sy = 2 * jnp.sin(s0 + s1)
+    sz = 2j * jnp.sin(s0 - s1)
     return sx, sy, sz
+
+
+# this is the slow backup plan if no `pauli` method available
+def project_spins(ansatz, params, x: ElecConf) -> Array:
+    # prepare to calculate wf ratios
+    logpsi_fn = log_psi_from_model(ansatz)
+    batched_logpsi = jax.vmap(logpsi_fn, in_axes=[None, 0])
+    # simple integration
+    int1d = jax.scipy.integrate.trapezoid
+    # exact spin integration by Simpson's rule
+    ng = 9
+    sgrid = jnp.linspace(0, 2*jnp.pi, ng)
+    # s on the left, wfn at the denominator
+    logpsi0 = logpsi_fn(params, x)
+    r0, s0 = ensure_spin(x)
+    nelec, ndim = r0.shape
+    # inner loop for s1 on the right side, <s|\sigma|s1> psi(s1) / psi(s)
+    def evaluate_spin_projections(s1: float):
+        """At a given spin value, evaluate projection of all electrons
+        onto Pauli matrices.
+
+        Args:
+            s1 (float): spin value on integration grid
+        Return:
+            Array: grid values with shape (nelec, 3)
+        """
+        news = s1 * jnp.eye(nelec) + s0 * (1-jnp.eye(nelec))
+        newx = (jnp.broadcast_to(r0, (nelec, nelec, ndim)), news)
+        logpsi1 = batched_logpsi(params, newx)
+        ratio = jnp.exp(logpsi1 - logpsi0) # psi1 on top, psi0 on bottom
+        # s1 to be integrated is on the right
+        return jnp.stack(pauli_ss(s0, s1), axis=-1) * ratio[..., None]
+    # get spin integration grids (ns, nelec, 3) for (nelec e, 3 Paulis)
+    grids = jax.lax.map(evaluate_spin_projections, sgrid)
+    # integrate s1
+    weights = int1d(grids, x=sgrid, axis=0) / (2*jnp.pi)
+    return weights
+
 
 def gen_calc_mdens(
         cell: Array, bins: Tuple[int],
         ansatz, params: ArrayTree
 ) -> Callable:
+    # same normalization as density
+    hrange = [(0, 1)] * len(bins)
+    bin_vol = np.prod(np.diff(hrange, axis=-1)) / np.prod(bins)
     # prepare to calculate fractional coordinates
     invvec = jnp.linalg.inv(cell)
-    # prepare to calculate wf ratios
-    logpsi_fn = log_psi_from_model(ansatz)
-    batched_logpsi = jax.vmap(logpsi_fn, in_axes=[None, 0])
-
-    def project_spins(x: ElecConf) -> Array:
-        #from scipy.integrate import simpson
-        #int1d = simpson
-        # !!!! unable to use simpson in lax.map?
-        int1d = jax.scipy.integrate.trapezoid
-        # exact spin integration by Simpson's rule
-        ng = 9
-        sgrid = jnp.linspace(0, 2*jnp.pi, ng)
-
-        logpsi0 = logpsi_fn(params, x)
-        r, s = ensure_spin(x)
-        nelec, ndim = r.shape
-
-        def evaluate_spin_projections(s1: float):
-            """At a given spin value, evaluate projection of all electrons
-            onto Pauli matrices.
-
-            Args:
-                s1 (float): spin value on integration grid
-            Return:
-                Array: grid values with shape (3, nelec)
-            """
-            news = s1 * jnp.eye(nelec) + s * (1-jnp.eye(nelec))
-            newx = (jnp.broadcast_to(r, (nelec, nelec, ndim)), news)
-            logpsi1 = batched_logpsi(params, newx)
-            ratio = logpsi1 / logpsi0
-            sx, sy, sz = paulis(s1, s)
-            sxs = (sx * ratio).real
-            sys = (sy * ratio).real
-            szs = (sz * ratio).real
-            return jnp.vstack([sxs, sys, szs])
-
-        # get spin integration grids (ns, 3, nelec) for (3 Paulis, nelec e)
-        grids = jax.lax.map(evaluate_spin_projections, sgrid)
-        # integrate s1
-        weights = int1d(grids, x=sgrid, axis=0)
-        return weights
-
-    def calc_mdens_snapshot(x: ElecConf) -> Array:
-        r, s = ensure_spin(x)
-        fracs = (r @ invvec) % 1
-
-        weights = project_spins(x)
-        wx, wy, wz = weights
-
-        hx, _ = jnp.histogramdd(fracs, bins=bins, range=[(0, 1)]*len(bins), weights=wx)
-        hy, _ = jnp.histogramdd(fracs, bins=bins, range=[(0, 1)]*len(bins), weights=wy)
-        hz, _ = jnp.histogramdd(fracs, bins=bins, range=[(0, 1)]*len(bins), weights=wz)
-
-        nnr = np.prod(bins)
-        mags = jnp.array([hx, hy, hz]) * nnr
-        return mags
+    if hasattr(ansatz, 'pauli'):
+        batched_pauli = jax.vmap(partial(ansatz.apply, params, method='pauli'))
+    else:
+        from . import LOGGER
+        LOGGER.warning('No `pauli` method available, using backup integration method. '
+                       'This will be VERY SLOW.')
+        batched_pauli = lambda x: lax.map(partial(project_spins, ansatz, params), x)
 
     @ jax.jit
-    def calc_mdens(x: ElecConf):
-        # !!!! HACK: fake histogram to generate metadata
-        r, s = ensure_spin(x)
-        fracs = (r[0] @ invvec) % 1
-        _, edges = jnp.histogramdd(fracs, bins=bins, range=[(0, 1)]*len(bins))
+    def calc_mdens(walker: ElecConf):
+        r, s = ensure_spin(walker)
+        nsample, nelec, ndim = r.shape
+        fracs = (r.reshape(-1, ndim) @ invvec) % 1
+        weights = batched_pauli(walker).real # (nsample, nelec, 3)
+        wx, wy, wz = weights.reshape(-1, 3).T # (3, nsample * nelec)
+        # histogram
+        hx, edges = jnp.histogramdd(fracs, bins=bins, range=hrange, weights=wx)
+        hy, edges = jnp.histogramdd(fracs, bins=bins, range=hrange, weights=wy)
+        hz, edges = jnp.histogramdd(fracs, bins=bins, range=hrange, weights=wz)
+        mags = jnp.stack([hx, hy, hz], axis=0) / nsample / bin_vol
         meta = {'edges': edges}
-        mags = lax.map(calc_mdens_snapshot, x).mean(axis=0)
         return [mags], meta
 
     return calc_mdens

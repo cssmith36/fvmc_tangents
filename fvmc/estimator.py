@@ -6,9 +6,10 @@ from jax import lax
 from jax import numpy as jnp
 
 from .ewaldsum import EwaldSum
-from .hamiltonian import calc_ke_elec, calc_ke_full, get_nuclei_mass, calc_pe
+from .hamiltonian import calc_ke_elec, calc_ke_full, calc_pe, get_nuclei_mass
 from .moire import OneShell
-from .utils import ElecConf, FullConf, PMAP_AXIS_NAME, PmapAxis, exp_shifted
+from .utils import (PMAP_AXIS_NAME, ElecConf, FullConf, PmapAxis, exp_shifted,
+                    split_spin, attach_spin)
 
 
 def get_log_psi(model_apply, params, stop_gradient=False):
@@ -23,11 +24,15 @@ def get_log_psi(model_apply, params, stop_gradient=False):
     return log_psi
 
 
-def parse_extpots(extpots, **sysinfo):
-    """parse the extpots dict into a dict of functions"""
-    extpots = extpots or {}
+def parse_ext_pots(ext_pots, **sysinfo):
+    """parse the ext_pots dict into a dict of functions
+
+    external potentials (`ext_pots`) are functions that take electron
+    configurations as input and return a scalar of the value of the potential.
+    """
+    ext_pots = ext_pots or {}
     parsed = {}
-    for name, ext in extpots.items():
+    for name, ext in ext_pots.items():
         if callable(ext):
             parsed[name] = ext
         elif name == 'moire':
@@ -37,9 +42,30 @@ def parse_extpots(extpots, **sysinfo):
     return parsed
 
 
+def parse_spin_pots(spin_pots, **sysinfo):
+    """parse the spin_pots dict into a dict of functions
+
+    spin potentials (`spin_pots`) are functions that take electron
+    configurations as input and output a (n_elec, 3) array V_is of the potential,
+    corresponding to the potential on electron i and pauli component s.
+    """
+    spin_pots = spin_pots or {}
+    parsed = {}
+    for name, ext in spin_pots.items():
+        if callable(ext):
+            # 1-body spin potential, vmap over electrons
+            if name.lower().endswith("1b") or name.lower().endswith("onebody"):
+                ext = jax.vmap(ext, 0, 0)
+            parsed[name] = ext
+        else:
+            raise ValueError(f'Unknown spin potential: {name}')
+    return parsed
+
+
 def build_eval_local_elec(model, elems, nuclei, cell=None, *,
                           ke_kwargs=None, pe_kwargs=None,
-                          extpots=None, stop_gradient=True):
+                          ext_pots=None, spin_pots=None,
+                          stop_gradient=True):
     """create a function that evaluates local energy, sign and log abs of wavefunction.
 
     Args:
@@ -61,17 +87,27 @@ def build_eval_local_elec(model, elems, nuclei, cell=None, *,
     pe_fn = (pe_kwargs if callable(pe_kwargs) else
              partial(calc_pe, **pe_kwargs) if cell is None else
              EwaldSum(cell, **pe_kwargs).calc_pe)
-    extpot_fns = parse_extpots(extpots, elems=elems, nuclei=nuclei, cell=cell)
+    extpot_fns = parse_ext_pots(ext_pots, elems=elems, nuclei=nuclei, cell=cell)
+    spinpot_fns = parse_spin_pots(spin_pots, elems=elems, nuclei=nuclei, cell=cell)
 
     def eval_local(params, x: ElecConf):
-        sign, logf = model.apply(params, x)
+        sign, logf = model.apply(params, x) # may be overwritten by slog_and_pauli
         log_psi_fn = get_log_psi(model.apply, params,
                                  stop_gradient=stop_gradient)
+        x_c, x_s = split_spin(x) # coords and spins, x_s can be None
+        log_psi_partial = lambda x_c: log_psi_fn(attach_spin(x_c, x_s))
         ene_comps = {
-            "e_kin": ke_fn(log_psi_fn, x),
-            "e_coul": pe_fn(elems, nuclei, x),
-            **{f"e_{name}": fn(x) for name, fn in extpot_fns.items()}
+            "e_kin": ke_fn(log_psi_partial, x_c),
+            "e_coul": pe_fn(elems, nuclei, x_c),
+            **{f"e_{name}": fn(x_c) for name, fn in extpot_fns.items()}
         }
+        if spinpot_fns:
+            if hasattr(model, "slog_and_pauli"): # fast path
+                (sign, logf), pauli = model.apply(params, x, method="slog_and_pauli")
+            else: # calculate separately, may be slower
+                pauli = model.apply(params, x, method="pauli")
+            ene_comps.update({f"e_{name}": (fn(x_c) * pauli).sum()
+                              for name, fn in spinpot_fns.items()})
         eloc = jax.tree_util.tree_reduce(jnp.add, ene_comps, 0.0)
         if stop_gradient:
             ene_comps = jax.tree_map(lax.stop_gradient, ene_comps)
@@ -84,7 +120,8 @@ def build_eval_local_elec(model, elems, nuclei, cell=None, *,
 
 def build_eval_local_full(model, elems, cell=None, *,
                           ke_kwargs=None, pe_kwargs=None,
-                          extpots=None, stop_gradient=True):
+                          ext_pots=None, spin_pots=None,
+                          stop_gradient=True):
     """create a function that evaluates local energy, sign and log abs of full wavefunction.
 
     Args:
@@ -107,17 +144,20 @@ def build_eval_local_full(model, elems, cell=None, *,
     pe_fn = (pe_kwargs if callable(pe_kwargs) else
              partial(calc_pe, **pe_kwargs) if cell is None else
              EwaldSum(cell, **pe_kwargs).calc_pe)
-    extpot_fns = parse_extpots(extpots, elems=elems, cell=cell)
+    extpot_fns = parse_ext_pots(ext_pots, elems=elems, cell=cell)
+    assert not spin_pots, "spin potentials are not supported in full eval mode yet"
 
     def eval_local(params, conf: FullConf):
         r, x = conf
         sign, logf = model.apply(params, r, x)
         log_psi_fn = get_log_psi(model.apply, params,
                                  stop_gradient=stop_gradient)
+        x_c, x_s = split_spin(x) # coords and spins, x_s can be None
+        log_psi_partial = lambda r, x_c: log_psi_fn(r, attach_spin(x_c, x_s))
         ene_comps = {
-            "e_kin": ke_fn(log_psi_fn, mass, r, x),
-            "e_coul": pe_fn(elems, r, x),
-            **{f"e_{name}": fn(r, x) for name, fn in extpot_fns.items()}
+            "e_kin": ke_fn(log_psi_partial, mass, r, x_c),
+            "e_coul": pe_fn(elems, r, x_c),
+            **{f"e_{name}": fn(r, x_c) for name, fn in extpot_fns.items()}
         }
         eloc = jax.tree_util.tree_reduce(jnp.add, ene_comps, 0.0)
         if stop_gradient:

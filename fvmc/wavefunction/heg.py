@@ -1,6 +1,5 @@
 import functools
-from dataclasses import field as _field
-from typing import Callable, Optional, Sequence, Tuple, Union
+from typing import Optional, Sequence, Tuple, Union
 
 import jax
 import numpy as np
@@ -8,7 +7,7 @@ from flax import linen as nn
 from jax import numpy as jnp
 
 from ..utils import (Array, ElecConf, _t_real, ensure_no_spin,
-                     displace_matrix, fix_init, gen_kidx, log_linear_exp)
+                     fix_init, gen_kidx, log_linear_exp)
 from .base import ElecWfn
 from .neuralnet_pbc import dist_features_pbc
 
@@ -28,11 +27,12 @@ class ElecProductModel(ElecWfn):
     backflow: Optional[nn.Module] = None
     apply_backflow: Union[bool, Sequence[bool]] = True
 
-    @nn.compact
+    def setup(self) -> None:
+        self.bf_mask = ([self.apply_backflow] * len(self.submodels)
+                        if isinstance(self.apply_backflow, bool)
+                        else self.apply_backflow)
+
     def __call__(self, x: ElecConf) -> Tuple[Array, Array]:
-        apply_backflow = (self.apply_backflow
-                          if not isinstance(self.apply_backflow, bool)
-                          else [self.apply_backflow] * len(self.submodels))
         sign, logf = 1., 0.
         x_bf = x
         if self.backflow is not None:
@@ -41,7 +41,7 @@ class ElecProductModel(ElecWfn):
                 x_bf, (sign, logf) = out
             else:
                 x_bf = out
-        for model, with_bf in zip(self.submodels, apply_backflow):
+        for model, with_bf in zip(self.submodels, self.bf_mask):
             result = model(x_bf if with_bf else x)
             if isinstance(result, tuple):
                 sign *= result[0]

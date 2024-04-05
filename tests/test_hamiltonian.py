@@ -144,25 +144,6 @@ def test_kinetic_energy_compelx(p, forward_mode):
     np.testing.assert_allclose(actual_ke, target_ke)
 
 
-@pytest.mark.parametrize("forward_mode", [True, False])
-def test_kinetic_energy_spin(forward_mode):
-    # psi = exp[p @ x]
-    def log_psi_fn(x):
-        x, s = split_spin(x)
-        return (x * s[:, None]).sum()
-
-    key0 = jax.random.PRNGKey(0)
-    xx = jax.random.uniform(key0, (5, 3))
-    ss = jax.random.uniform(key0, (5,))
-    x = (xx, ss)
-
-    # target ke should be -0.5 * p**2
-    target_ke = jnp.sum(-0.5 * ss**2) * 3
-    actual_ke = calc_ke_elec(log_psi_fn, x, forward_mode=forward_mode)
-
-    np.testing.assert_allclose(actual_ke, target_ke)
-
-
 @pytest.mark.parametrize("x", [make_test_x(), make_batched_x()])
 def test_local_energy_shape(x):
     f, log_f = make_test_log_f()

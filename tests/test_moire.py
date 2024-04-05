@@ -105,6 +105,6 @@ def test_moire_local_energy():
     elems = jnp.zeros((0,), dtype=int)
     local_fn = build_eval_local_elec(
         model, elems, nuclei, cell,
-        extpots={"moire": {"am_length": am, "vm_depth": vm, "phi_shape": phi}})
+        ext_pots={"moire": {"am_length": am, "vm_depth": vm, "phi_shape": phi}})
     eloc, sign, logf, extras = local_fn(None, testpos)
     np.testing.assert_allclose(extras['e_moire'], np.sum(res))

@@ -142,9 +142,11 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
     loss_cfg = dict(loss_cfg) # so that we can pop
     ke_kwargs = loss_cfg.pop("ke_kwargs", {})
     pe_kwargs = loss_cfg.pop("pe_kwargs", {})
-    extpots = system_cfg.get("external_potentials", {})
+    ext_pots = system_cfg.get("external_potentials", {})
+    spin_pots = system_cfg.get("spin_potentials", {})
     lclargs = dict(ke_kwargs=ke_kwargs, pe_kwargs=pe_kwargs,
-                   extpots=extpots, stop_gradient=True)
+                   ext_pots=ext_pots, spin_pots=spin_pots,
+                   stop_gradient=True)
     local_fn = (build_eval_local_full(ansatz, elems, cell, **lclargs)
                 if quantum_nuclei else
                 build_eval_local_elec(ansatz, elems, nuclei, cell, **lclargs))

@@ -18,12 +18,22 @@ class Dummy:
 
 def get_sign_log(func, dummy_r=False):
     def log_sign(params, x):
+        if isinstance(x, tuple):
+            x = x[0]
         f = func(params, x)
         return jnp.sign(f), jnp.log(jnp.abs(f))
     if dummy_r:
         return lambda p, r, x: log_sign(p, x)
     else:
         return log_sign
+
+
+def get_dummy_apply_pauli(func):
+    def apply_fn(params, x, method=None):
+        if method is not None and "pauli" in method:
+            return jnp.ones((x[0].shape[0], 3))
+        return func(params, x[0])
+    return apply_fn
 
 
 def make_dummy_model(apply_fn):
@@ -34,7 +44,7 @@ def make_dummy_model(apply_fn):
 
 @pytest.mark.parametrize("pbc", [False, True])
 def test_eval_local_shape(pbc):
-    f, logf = make_test_log_f()
+    f, _ = make_test_log_f()
     model = make_dummy_model(get_sign_log(f))
     nuclei, elems = make_test_ions()
     ndim = nuclei.shape[-1]
@@ -53,7 +63,7 @@ def test_eval_local_shape(pbc):
 
 @pytest.mark.parametrize("pbc", [False, True])
 def test_eval_local_full_shape(pbc):
-    f, logf = make_test_log_f()
+    f, _ = make_test_log_f()
     model = make_dummy_model(get_sign_log(f, dummy_r=True))
     r, elems = make_test_ions()
     ndim = r.shape[-1]
@@ -72,7 +82,7 @@ def test_eval_local_full_shape(pbc):
 
 
 def test_eval_local_custom():
-    f, logf = make_test_log_f()
+    f, _ = make_test_log_f()
     model = make_dummy_model(get_sign_log(f))
     nuclei, elems = make_test_ions()
     dummy_kwargs = {"ke_kwargs": lambda *a,**k: 0.,
@@ -91,8 +101,8 @@ def test_eval_local_custom():
     chex.assert_trees_all_equal(beloc, bextras["e_kin"], bextras["e_coul"], jnp.zeros(3))
 
 
-def test_eval_local_custom_full():
-    f, logf = make_test_log_f()
+def test_eval_local_full_custom():
+    f, _ = make_test_log_f()
     model = make_dummy_model(get_sign_log(f, dummy_r=True))
     r, elems = make_test_ions()
     dummy_kwargs = {"ke_kwargs": lambda *a,**k: 0.,
@@ -110,6 +120,41 @@ def test_eval_local_custom_full():
     beloc, bsign, blogf, bextras = jax.vmap(eval_local, (None, 0))(a, (br, bx))
     assert beloc.shape == bsign.shape == blogf.shape == (3,)
     chex.assert_trees_all_equal(beloc, bextras["e_kin"], bextras["e_coul"], jnp.zeros(3))
+
+
+def test_eval_local_spin():
+    f, _ = make_test_log_f()
+    model = make_dummy_model(get_dummy_apply_pauli(get_sign_log(f)))
+    nuclei, elems = make_test_ions()
+    spin_pots = {"ones": lambda x: jnp.ones((x.shape[0], 3)),
+                 "one1b": lambda x: jnp.ones(3)}
+    eval_local = build_eval_local_elec(model, elems, nuclei, spin_pots=spin_pots)
+
+    a = None
+    x = make_test_x()
+    n_elec = x.shape[0]
+    s = jnp.zeros(n_elec)
+    eloc, sign, logf, extras = eval_local(a, (x, s))
+    assert eloc.shape == sign.shape == logf.shape == tuple()
+    target_ke = -0.5 * (x.shape[-1] * x.shape[-2]) * 2 / f(None, x)
+    np.testing.assert_allclose(extras["e_kin"], target_ke)
+    chex.assert_trees_all_close(extras["e_ones"], extras["e_one1b"], n_elec * 3)
+
+
+def test_eval_local_full_spin():
+    f, _ = make_test_log_f()
+    model = make_dummy_model(get_sign_log(f, dummy_r=True))
+    r, elems = make_test_ions()
+    eval_local = build_eval_local_full(model, elems)
+
+    a = None
+    x = make_test_x()
+    n_elec = x.shape[0]
+    s = jnp.zeros(n_elec)
+    eloc, sign, logf, extras = eval_local(a, (r, (x, s)))
+    assert eloc.shape == sign.shape == logf.shape == tuple()
+    target_ke = -0.5 * (x.shape[-1] * x.shape[-2]) * 2 / f(None, x)
+    np.testing.assert_allclose(extras["e_kin"], target_ke)
 
 
 @pytest.mark.parametrize("mini_batch", [None, 1])
