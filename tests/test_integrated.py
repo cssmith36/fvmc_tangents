@@ -42,7 +42,7 @@ def shared_test(tmp_path, cfg):
 
 
 @pytest.mark.veryslow
-def test_h2_kfac(tmp_path, capfd):
+def test_h2_kfac(tmp_path):
 
     cfg = get_shared_cfg()
     cfg.system.nuclei = [[0.,0.,0.], [0.,0.,1.]]
@@ -56,7 +56,7 @@ def test_h2_kfac(tmp_path, capfd):
 
 
 @pytest.mark.veryslow
-def test_heg_adam(tmp_path, capfd):
+def test_heg_adam(tmp_path):
 
     cfg = get_shared_cfg()
     cfg.system.nuclei = None
@@ -126,7 +126,7 @@ def get_heg_cfg():
 
 
 @pytest.mark.veryslow
-def test_heg_nnbf(tmp_path, capfd):
+def test_heg_nnbf(tmp_path):
     from fvmc.wavefunction.heg import PlanewaveSlater, PairJastrowCCK, ElecProductModel
     from fvmc.wavefunction.hegnn import NeuralBackflow
 
