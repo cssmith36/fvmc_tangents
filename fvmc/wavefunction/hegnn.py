@@ -156,5 +156,5 @@ class MessagePassingLayer(nn.Module):
         # Update the single-particle and particle-particle streams
         h_i = self.f1b(g_i, m_ij, out_size=h_i.shape[-1]) + h_i
         h_ij = self.f2b(g_ij, m_ij, out_size=h_ij.shape[-1]) + h_ij
-        # Final Layer Norm before sending into next layer
+        # Send to next layer
         return h_i, h_ij
