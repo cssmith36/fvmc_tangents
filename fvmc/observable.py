@@ -29,6 +29,7 @@ import numpy as np
 import yaml
 from jax import lax
 from jax import numpy as jnp
+from jax import tree_util as jtu
 
 from .ewaldsum import gen_pbc_disp_fn, gen_positive_gpoints
 from .wavefunction.base import log_psi_from_model
@@ -127,7 +128,7 @@ def calc_obs(traj: ElecConf, calc_func: Callable, *args, **kwargs):
     """
     partial_calc = lambda walker: calc_func(walker, *args, **kwargs)
     outputs, metas = lax.map(partial_calc, traj)
-    meta = jax.tree_map(lambda x: x[0], metas)
+    meta = jtu.tree_map(lambda x: x[0], metas)
     # calculate mean and error
     yml = []
     yel = []

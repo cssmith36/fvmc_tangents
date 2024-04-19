@@ -7,6 +7,7 @@ import kfac_jax
 import numpy as np
 from flax import linen as nn
 from jax import numpy as jnp
+from jax import tree_util as jtu
 from ml_collections import ConfigDict
 
 from . import LOGGER
@@ -41,7 +42,7 @@ class TrainingState(NamedTuple):
 def trim_training_state(train_state):
     key, params, mc_state, opt_state = train_state
     if key.ndim > 1: # pmapped
-        params, opt_state = jax.tree_map(lambda x: x[0], (params, opt_state))
+        params, opt_state = jtu.tree_map(lambda x: x[0], (params, opt_state))
     return TrainingState(key, params, mc_state, opt_state)
 
 
@@ -54,7 +55,7 @@ def match_loaded_state_to_device(train_state, multi_device: bool):
             return train_state
         else: # from multi device
             key = key[0]
-            mc_state = jax.tree_map(lambda x: x.reshape(-1, *x.shape[2:]), mc_state)
+            mc_state = jtu.tree_map(lambda x: x.reshape(-1, *x.shape[2:]), mc_state)
     else: # to multi device
         params, opt_state = \
             kfac_jax.utils.replicate_all_local_devices((params, opt_state))
@@ -62,7 +63,7 @@ def match_loaded_state_to_device(train_state, multi_device: bool):
             key = key[:n_local_device]
         else:
             key = jax.random.split(key.reshape(-1, 2)[0], n_local_device)
-        mc_state = jax.tree_map(
+        mc_state = jtu.tree_map(
             lambda x: x.reshape(n_local_device, -1, *x.shape[n_paxis+1:]),
             mc_state)
         key, mc_state = kfac_jax.utils.broadcast_all_local_devices((key, mc_state))
@@ -171,7 +172,7 @@ def prepare(system_cfg, ansatz_cfg, sample_cfg, loss_cfg, optimize_cfg,
         **sample_cfg.get(sample_cfg.sampler, {}))
     sampler = make_multistep(raw_sampler, n_step=n_multistep, concat=False)
     sampler = make_batched(sampler, n_batch=n_batch, concat=True)
-    sampler = jax.tree_map(PAXIS.pmap if multi_device else jax.jit, sampler)
+    sampler = jtu.tree_map(PAXIS.pmap if multi_device else jax.jit, sampler)
 
     # make optimizer
     lr_schedule = (optimize_cfg.lr if callable(optimize_cfg.lr) else
@@ -310,7 +311,7 @@ def run(step_fn, train_state, iterations, log_cfg):
     ckpt_path = multi_process_name(log_cfg.ckpt_path)
 
     # mysterious step to prevent kfac memory error
-    train_state = jax.tree_map(jnp.copy, train_state)
+    train_state = jtu.tree_map(jnp.copy, train_state)
 
     LOGGER.info("Start training")
     if jax.process_index() == 0:
@@ -323,8 +324,8 @@ def run(step_fn, train_state, iterations, log_cfg):
         train_state, (mc_info, opt_info), sample_data = step_fn(train_state)
 
         # nan check
-        if not jax.tree_util.tree_all(
-          jax.tree_map(lambda a: jnp.all(~jnp.isnan(a)), train_state.params)):
+        if not jtu.tree_all(
+          jtu.tree_map(lambda a: jnp.all(~jnp.isnan(a)), train_state.params)):
             raise ValueError(f"NaN found in params at step {ii} "
                              f"(log step {int(opt_info['step'].mean())-1})")
         if jnp.any(opt_info["aux"]["nans"] > 0):
@@ -359,7 +360,7 @@ def run(step_fn, train_state, iterations, log_cfg):
             sconf, slogw = sample_data
             flat_conf = np.concatenate([
                 np.asarray(sc).reshape(slogw.size, -1)
-                for sc in jax.tree_util.tree_leaves(sconf)
+                for sc in jtu.tree_leaves(sconf)
             ], axis=-1)[None]
             dumper.append(flat_conf) # [n_step, n_batch, n_coord]
 

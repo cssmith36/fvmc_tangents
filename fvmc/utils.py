@@ -11,6 +11,7 @@ import numpy as np
 from jax import lax
 from jax import numpy as jnp
 from jax import scipy as jsp
+from jax import tree_util as jtu
 from flax import linen as nn
 from jax.numpy import ndarray as Array
 from chex import ArrayTree
@@ -168,7 +169,7 @@ def r2c_grad(f, argnums=0, has_aux=False):
     f_splited = compose(lambda x: jnp.array([x.real, x.imag]), f)
     def grad_f(*args, **kwargs):
         jac = jax.jacrev(f_splited, argnums=argnums)(*args, **kwargs)
-        return jax.tree_map(lambda x: x[0] + 1j * x[1], jac)
+        return jtu.tree_map(lambda x: x[0] + 1j * x[1], jac)
     return grad_f
 
 def r2c_grad_with_aux(f, argnums=0):
@@ -176,7 +177,7 @@ def r2c_grad_with_aux(f, argnums=0):
     def grad_f(*args, **kwargs):
         jac, aux = jax.jacrev(f_splited,
                         argnums=argnums, has_aux=True)(*args, **kwargs)
-        return jax.tree_map(lambda x: x[0] + 1j * x[1], jac), aux
+        return jtu.tree_map(lambda x: x[0] + 1j * x[1], jac), aux
     return grad_f
 
 def adaptive_grad(f, argnums=0, has_aux=False):
@@ -289,13 +290,13 @@ def build_moving_avg(decay=0.99, early_growth=True):
 def ravel_shape(target_shape):
     from jax.flatten_util import ravel_pytree
     with jax.ensure_compile_time_eval():
-        tmp = jax.tree_map(jnp.zeros, target_shape)
+        tmp = jtu.tree_map(jnp.zeros, target_shape)
         flat, unravel_fn = ravel_pytree(tmp)
     return flat.size, unravel_fn
 
 
 def tree_where(condition, x, y):
-    return jax.tree_map(partial(jnp.where, condition), x, y)
+    return jtu.tree_map(partial(jnp.where, condition), x, y)
 
 
 def fix_init(key, value, dtype=None, random=0., rnd_additive=False):
@@ -396,7 +397,7 @@ def multi_process_name(filename):
 def cfg_to_dict(cfg):
     if not isinstance(cfg, ConfigDict):
         return cfg
-    return jax.tree_map(cfg_to_dict, cfg.to_dict())
+    return jtu.tree_map(cfg_to_dict, cfg.to_dict())
 
 def cfg_to_yaml(cfg):
     import yaml
@@ -415,7 +416,7 @@ def cfg_to_yaml(cfg):
         if isinstance(obj, yaml_type):
             return obj
         return repr(obj)
-    cdict = jax.tree_map(convert_obj, cdict)
+    cdict = jtu.tree_map(convert_obj, cdict)
     return yaml.dump(cdict, default_flow_style=None)
 
 def dict_to_cfg(cdict, **kwargs):

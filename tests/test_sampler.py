@@ -4,6 +4,7 @@ import jax
 import numpy as np
 import pytest
 from jax import numpy as jnp
+from jax import tree_util as jtu
 
 from fvmc.utils import exp_shifted
 from fvmc.sampler import (build_conf_init_fn, choose_adaptive_builder,
@@ -39,7 +40,7 @@ def shared_sampler_test(sampler, jit=True, check_info=True):
     key1, key2, key3 = jax.random.split(_key0, 3)
 
     if jit:
-        sampler = jax.tree_map(jax.jit, sampler)
+        sampler = jtu.tree_map(jax.jit, sampler)
 
     state = sampler.init(key1, params)
     state = sampler.burn_in(key2, params, state, _nburn)

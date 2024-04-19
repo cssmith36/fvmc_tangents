@@ -6,6 +6,7 @@ import jax
 import numpy as np
 from flax import linen as nn
 from jax import numpy as jnp
+from jax import tree_util as jtu
 
 from ..utils import (Array, ElecConf, NuclConf, _t_real, adaptive_residual,
                      build_mlp, collect_elems, displace_matrix, ensure_no_spin,
@@ -299,8 +300,8 @@ class FermiNet(FullWfn):
         # tuple of [n_det, n_orb, n_orb]
         orbitals = orbital_map(h1, d_ei=dmat[n_nucl:, :n_nucl])
 
-        signs, logdets = jax.tree_map(lambda *arrs: jnp.stack(arrs, axis=0),
-            *jax.tree_map(jnp.linalg.slogdet, orbitals)) # [1 or 2, n_det]
+        signs, logdets = jtu.tree_map(lambda *arrs: jnp.stack(arrs, axis=0),
+            *jtu.tree_map(jnp.linalg.slogdet, orbitals)) # [1 or 2, n_det]
         signs, logdets = signs.prod(0), logdets.sum(0)
         det_weights = self.param(
             "det_weights", nn.initializers.ones, (self.determinants, 1))

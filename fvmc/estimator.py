@@ -4,6 +4,7 @@ import jax
 import kfac_jax
 from jax import lax
 from jax import numpy as jnp
+from jax import tree_util as jtu
 
 from .ewaldsum import EwaldSum
 from .hamiltonian import calc_ke_elec, calc_ke_full, calc_pe, get_nuclei_mass
@@ -108,9 +109,9 @@ def build_eval_local_elec(model, elems, nuclei, cell=None, *,
                 pauli = model.apply(params, x, method="pauli")
             ene_comps.update({f"e_{name}": (fn(x_c) * pauli).sum()
                               for name, fn in spinpot_fns.items()})
-        eloc = jax.tree_util.tree_reduce(jnp.add, ene_comps, 0.0)
+        eloc = jtu.tree_reduce(jnp.add, ene_comps, 0.0)
         if stop_gradient:
-            ene_comps = jax.tree_map(lax.stop_gradient, ene_comps)
+            ene_comps = jtu.tree_map(lax.stop_gradient, ene_comps)
             eloc = lax.stop_gradient(eloc)
         extras = {**ene_comps} # for now only log energy components
         return eloc, sign, logf, extras
@@ -159,9 +160,9 @@ def build_eval_local_full(model, elems, cell=None, *,
             "e_coul": pe_fn(elems, r, x_c),
             **{f"e_{name}": fn(r, x_c) for name, fn in extpot_fns.items()}
         }
-        eloc = jax.tree_util.tree_reduce(jnp.add, ene_comps, 0.0)
+        eloc = jtu.tree_reduce(jnp.add, ene_comps, 0.0)
         if stop_gradient:
-            ene_comps = jax.tree_map(lax.stop_gradient, ene_comps)
+            ene_comps = jtu.tree_map(lax.stop_gradient, ene_comps)
             eloc = lax.stop_gradient(eloc)
         extras = {**ene_comps} # for now only log energy components
         return eloc, sign, logf, extras
@@ -177,19 +178,19 @@ def get_batched_local(eval_local_fn, mini_batch=None,
         partial_local = jax.vmap(partial(eval_local_fn, params), 0, 0)
         if checkpoint:
             partial_local = jax.checkpoint(partial_local, prevent_cse=False)
-        stack_data = jax.tree_map(lambda x: x.reshape(
+        stack_data = jtu.tree_map(lambda x: x.reshape(
             x.shape[0] // mini_batch, mini_batch, *x.shape[1:]), data)
         if not unroll_loop:
             stack_res = lax.map(partial_local, stack_data)
-            res = jax.tree_map(lambda x: x.reshape(-1, *x.shape[2:]), stack_res)
+            res = jtu.tree_map(lambda x: x.reshape(-1, *x.shape[2:]), stack_res)
         else: # manually unroll the map to prevent a bug in compiling
             res_list = []
-            n_iter, = set(jax.tree_util.tree_leaves(
-                jax.tree_map(lambda a:a.shape[0], stack_data)))
+            n_iter, = set(jtu.tree_leaves(
+                jtu.tree_map(lambda a:a.shape[0], stack_data)))
             for ii in range(n_iter):
-                slice_data = jax.tree_map(lambda a, ii=ii: a[ii], stack_data)
+                slice_data = jtu.tree_map(lambda a, ii=ii: a[ii], stack_data)
                 res_list.append(partial_local(slice_data))
-            res = jax.tree_map(lambda *a: jnp.concatenate(a, axis=0), *res_list)
+            res = jtu.tree_map(lambda *a: jnp.concatenate(a, axis=0), *res_list)
         return res
     return batch_local
 

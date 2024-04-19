@@ -6,6 +6,7 @@ import optax
 from jax import lax
 from jax import numpy as jnp
 from jax import scipy as jsp
+from jax import tree_util as jtu
 from jax.flatten_util import ravel_pytree
 from optax import GradientTransformationExtraArgs, ScalarOrSchedule
 
@@ -95,7 +96,7 @@ def scale_by_fisher_inverse(
         if not (isinstance(data, Tuple) and len(data) == 2):
             data = (data, None)
         sample, logsw = data
-        n_sample = jax.tree_util.tree_leaves(sample)[0].shape[0]
+        n_sample = jtu.tree_leaves(sample)[0].shape[0]
         # make sure paxis.sum(jnp.sum(rel_w)) == 1, and rel_w has to be positive
         rel_w = jnp.ones((1,))
         if use_weighted and logsw is not None:
@@ -123,7 +124,7 @@ def scale_by_fisher_inverse(
         if mini_batch is None:
             score = score_fn(sample)
         else:
-            batch_sample = jax.tree_map(
+            batch_sample = jtu.tree_map(
                 lambda s: s.reshape(-1, mini_batch, *s.shape[1:]), sample)
             batch_score = lax.map(score_fn, batch_sample)
             score = batch_score.reshape(-1, grads_flat.shape[-1])

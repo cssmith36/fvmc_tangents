@@ -6,6 +6,7 @@ import jax
 import numpy as np
 from jax import lax
 from jax import numpy as jnp
+from jax import tree_util as jtu
 from jax.flatten_util import ravel_pytree
 from optax import bias_correction, update_moment
 
@@ -24,7 +25,7 @@ Flag = Union[int, str]
 
 
 class MCSampler(NamedTuple):
-    # to jit the sampler, use jax.tree_map(jax.jit, sampler)
+    # to jit the sampler, use jtu.tree_map(jax.jit, sampler)
     sample: Callable[[KeyArray, Params, State], Tuple[State, Data, Info]]
     init: Callable[[KeyArray, Params], State]
     refresh: Callable[[State, Params], State]
@@ -142,7 +143,7 @@ def make_batched(sampler: MCSampler, n_batch: int, concat: bool = False,
         vkey = jax.random.split(key, n_batch)
         new_state, *res = vaxis.vmap(sample_fn, (0, None, 0))(vkey, params, state)
         if concat:
-            res = jax.tree_map(jnp.concatenate, res)
+            res = jtu.tree_map(jnp.concatenate, res)
         return new_state, *res
     def init(key, params):
         vkey = jax.random.split(key, n_batch)
@@ -165,7 +166,7 @@ def make_multistep_fn(sample_fn, n_step, concat=False):
         keys = jax.random.split(key, n_step)
         new_state, res = lax.scan(inner, state, keys)
         if concat:
-            res = jax.tree_map(jnp.concatenate, res)
+            res = jtu.tree_map(jnp.concatenate, res)
         return new_state, *res
     return multi_sample
 
@@ -564,7 +565,7 @@ def _extract_sample_shape(shape_or_init):
         else: # is init function
             _dummy_key = jax.random.PRNGKey(0)
             init_sample = shape_or_init(_dummy_key)
-            sample_shape = jax.tree_map(lambda a: np.array(a.shape), init_sample)
+            sample_shape = jtu.tree_map(lambda a: np.array(a.shape), init_sample)
     return sample_shape
 
 
@@ -591,6 +592,6 @@ def _align_vector(vec, sample_shape):
     xsize, unravel = ravel_shape(sample_shape)
     vec_ = ravel_pytree(vec)[0]
     vec = (vec_ if vec_.size in (1, xsize) else
-           ravel_pytree(jax.tree_map(jnp.broadcast_to, vec, sample_shape))[0])
+           ravel_pytree(jtu.tree_map(jnp.broadcast_to, vec, sample_shape))[0])
     assert vec.shape in ((1,), (xsize,))
     return vec

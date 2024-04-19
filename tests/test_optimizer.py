@@ -6,6 +6,7 @@ import pytest
 import jax
 import numpy as np
 from jax import numpy as jnp
+from jax import tree_util as jtu
 
 from fvmc.optimizer import build_optimizer, kfac_jax
 from fvmc.utils import adaptive_split, PAXIS, nn
@@ -44,7 +45,7 @@ def _train(nsteps, optimizer, sampler, params, key, multi_device=False):
         loss_list.append(loss.item())
 
     if multi_device:
-        params = jax.tree_map(lambda x: x[0], params)
+        params = jtu.tree_map(lambda x: x[0], params)
 
     return loss_list, params
 

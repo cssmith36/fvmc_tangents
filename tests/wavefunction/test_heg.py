@@ -3,6 +3,7 @@ import numpy as np
 import chex
 import pytest
 from jax import numpy as jnp
+from jax import tree_util as jtu
 
 from fvmc.wavefunction.heg import (PlanewaveSlater, PairJastrowCCK,
                                    PairBackflow, IterativeBackflow,
@@ -67,7 +68,7 @@ def _check_bf_pbc(key, model, params, cell):
 def _check_bf_perm(key, model, params, spins, cell):
     # check permutation, backflow covariant, jastrow invariant
     x = jax.random.uniform(key, (_nelec, cell.shape[-1]))
-    perm = jnp.concatenate(jax.tree_map(
+    perm = jnp.concatenate(jtu.tree_map(
         jax.random.permutation,
         list(jax.random.split(key, len(spins))),
         jnp.split(jnp.arange(sum(spins)), np.cumsum(spins)[:-1])))

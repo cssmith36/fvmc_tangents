@@ -2,6 +2,7 @@ import pytest
 import os
 import jax
 from jax import numpy as jnp
+from jax import tree_util as jtu
 
 import fvmc
 
@@ -38,7 +39,7 @@ def shared_test(tmp_path, cfg):
     if cfg.log.use_tensorboard:
         assert (tmp_path / cfg.log.tracker_path).exists()
 
-    assert jax.tree_util.tree_all(jax.tree_map(lambda a: jnp.all(~jnp.isnan(a)), train_state))
+    assert jtu.tree_all(jtu.tree_map(lambda a: jnp.all(~jnp.isnan(a)), train_state))
 
 
 @pytest.mark.veryslow

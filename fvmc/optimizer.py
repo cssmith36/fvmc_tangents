@@ -23,6 +23,7 @@ import jax
 import kfac_jax
 import optax
 from jax import numpy as jnp
+from jax import tree_util as jtu
 
 from . import curvature_tags_and_blocks
 from .preconditioner import scale_by_fisher_inverse
@@ -174,7 +175,7 @@ class OptaxWrapper:
         # Add step and batch size info
         stats["step"] = getattr(new_state, "count", -1)
         stats["learning_rate"] = getattr(new_state, "hyperparams", {}).get("learning_rate", -1)
-        batch_size = jax.tree_util.tree_leaves(batch)[0].shape[0]
+        batch_size = jtu.tree_leaves(batch)[0].shape[0]
         stats["batch_size"] = batch_size * jax.device_count()
         stats["data_seen"] = stats["batch_size"] * stats["step"]
 
