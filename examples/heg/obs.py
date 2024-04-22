@@ -84,19 +84,31 @@ def main():
     meta_gofr, grms, gres = obs.calc_obs(traj, calc_gofr)
     #   save with processed metadata
     r = meta_gofr['r']
-    meta = dict(aname='gofr', r=r.tolist(), normalize=gr_norm)
+    meta = dict(aname='gofr', r=r.tolist(), normalize=gr_norm, inhomogeneous=False)
     meta.update(meta_sys)
     obs.save_obs('%s/gofr' % cache_dir, meta, grms, gres)
+    # inhomogeneous
+    calc_ihgofr = obs.gen_calc_gofr(cell, spins, nx, rcut, normalize=gr_norm,
+                                    dens_hist=rhoms, dens_edges=edges)
+    _, ihgrms, ihgres = obs.calc_obs(traj, calc_ihgofr)
+    meta['inhomogeneous'] = True
+    obs.save_obs('%s/ihgr' % cache_dir, meta, ihgrms, ihgres)
 
     #   vector
     calc_vecgofr = obs.gen_calc_vecgofr(cell, spins, bins, normalize=gr_norm)
     meta_gv, gvms, gves = obs.calc_obs(traj, calc_vecgofr)
     #   save with processed metadata
-    meta = dict(aname='vecgofr', normalize=gr_norm)
+    meta = dict(aname='vecgofr', normalize=gr_norm, inhomogeneous=False)
     for i, e in enumerate(meta_gv['edges']):
       meta['edge%d' % i] = e.tolist()
     meta.update(meta_sys)
     obs.save_obs('%s/vecgofr' % cache_dir, meta, gvms, gves)
+    # inhomogeneous
+    calc_ihvgofr = obs.gen_calc_vecgofr(cell, spins, bins, normalize=gr_norm,
+                                        dens_hist=rhoms, dens_edges=edges)
+    _, ihgvms, ihgves = obs.calc_obs(traj, calc_ihvgofr)
+    meta['inhomogeneous'] = True
+    obs.save_obs('%s/vecihgr' % cache_dir, meta, ihgvms, ihgves)
 
     #   S(k)
     rs = heg_rs(cell, nelec)

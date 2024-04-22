@@ -22,7 +22,7 @@ Typical usage:
 """
 
 from functools import partial
-from typing import Callable, Tuple, Literal
+from typing import Callable, Sequence, Literal, Tuple
 
 import jax
 import numpy as np
@@ -170,12 +170,12 @@ def load_obs(prefix: str):
 
 # =============================== dens ==============================
 
-def gen_calc_dens(cell: Array, spins: Tuple[int], bins: Tuple[int]):
+def gen_calc_dens(cell: Array, spins: Sequence[int], bins: Sequence[int]):
     return partial(calc_dens, cell=cell, spins=spins, bins=bins)
 
 
 @partial(jax.jit, static_argnames=('bins', 'spins'))
-def calc_dens(walker: Array, cell: Array, spins: Tuple[int], bins: Tuple[int]):
+def calc_dens(walker: Array, cell: Array, spins: Sequence[int], bins: Sequence[int]):
     # normalized so that the integral of rho is the number of particles
     # numerically, sum(hist * bin_vol) = n_elec
     nsample, nelec, ndim = walker.shape
@@ -183,11 +183,11 @@ def calc_dens(walker: Array, cell: Array, spins: Tuple[int], bins: Tuple[int]):
     bin_vol = np.prod(np.diff(hrange, axis=-1)) / np.prod(bins)
     split_idx = np.cumsum((spins))[:-1]
     invvec = jnp.linalg.inv(cell)
-    walker_split = jnp.split(walker, split_idx, axis=-2)
+    frac_walker = (walker @ invvec) % 1
+    frac_split = jnp.split(frac_walker, split_idx, axis=-2)
     res = []
-    for ws in walker_split:
-        fracs = jnp.dot(ws.reshape(-1, ndim), invvec) % 1
-        hist, edges = jnp.histogramdd(fracs, bins=bins, range=hrange)
+    for fs in frac_split:
+        hist, edges = jnp.histogramdd(fs.reshape(-1, ndim), bins=bins, range=hrange)
         res.append(hist / nsample / bin_vol)
     return res, dict(edges=edges)
 
@@ -201,7 +201,7 @@ def select_kvecs(recvec: Array, kcut: float, g_max: int=200) -> Array:
     return kvecs[sel]
 
 
-def gen_calc_sofk(cell: Array, spins: Tuple[int], kcut: float) -> Callable:
+def gen_calc_sofk(cell: Array, spins: Sequence[int], kcut: float) -> Callable:
     recvec = jnp.linalg.inv(cell).T
     kvecs = select_kvecs(recvec, kcut)
 
@@ -230,8 +230,9 @@ def gen_calc_sofk(cell: Array, spins: Tuple[int], kcut: float) -> Callable:
 # =============================== gofr ==============================
 
 def gen_calc_vecgofr(
-        cell: Array, spins: Tuple[int], bins: Tuple[int],
-        normalize: Literal["spin", "charge"] = "spin"
+        cell: Array, spins: Sequence[int], bins: Sequence[int],
+        normalize: Literal["spin", "charge"] = "spin",
+        dens_hist: Array = None, dens_edges: Sequence[Array] = None,
 ) -> Callable:
     # normalized so that for uncorrelated particles this is one
     # `normalize = 'spin'` means each spin species is normalized separately
@@ -253,7 +254,11 @@ def gen_calc_vecgofr(
         disp = jax.vmap(partial(displace_matrix, disp_fn=disp_fn))(walker, walker)
         disp = disp @ invvec
         nsample = len(disp)
-        hists, edges = histogram_spin_blocks(disp, bins, spins, (-0.5, 0.5))
+        weights = (1 / get_pair_dens_prod(walker, cell, spins,
+                                          dens_hist, dens_edges, normalize=True)
+                   if dens_hist is not None else None)
+        hists, edges = histogram_spin_blocks(disp, bins, spins, (-0.5, 0.5),
+                                             weights=weights)
         res = [h * n / nsample for h, n in zip(hists, norms)]
         return res, dict(edges=edges)
 
@@ -261,9 +266,10 @@ def gen_calc_vecgofr(
 
 
 def gen_calc_gofr(
-        cell: Array, spins: Tuple[int],
+        cell: Array, spins: Sequence[int],
         bins: int, rcut: float,
-        normalize: Literal["spin", "charge"] = "spin"
+        normalize: Literal["spin", "charge"] = "spin",
+        dens_hist: Array = None, dens_edges: Sequence[Array] = None,
 ) -> Callable:
     # normalized so that for uncorrelated particles this is one
     # `normalize = 'spin'` means each spin species is normalized separately
@@ -284,8 +290,12 @@ def gen_calc_gofr(
         dist = jax.vmap(partial(pdist, disp_fn=disp_fn))(walker)  # [-1, nelec, nelec]
         dist = dist[:, :, :, None] # [-1, nelec, nelec, ndim]
         nsample = dist.shape[0]
+        weights = (1 / get_pair_dens_prod(walker, cell, spins,
+                                          dens_hist, dens_edges, normalize=True)
+                   if dens_hist is not None else None)
         # count
-        hists, edges = histogram_spin_blocks(dist, bins, spins, (0, rcut))
+        hists, edges = histogram_spin_blocks(dist, bins, spins, (0, rcut),
+                                             weights=weights)
         # grid
         e = jnp.asarray(edges[0])
         r = 0.5 * (e[1:] + e[:-1])
@@ -309,15 +319,60 @@ def gofr_norm_factor(cell: Array, bin_edges: Array) -> Array:
     return volume / vnorm
 
 
+def query_density(
+        pos: Array, cell: Array,
+        dens_hist: Array, dens_edges: Sequence[Array] = None,
+        normalize: bool = False
+) -> Array:
+    ndim = dens_hist.ndim
+    assert ndim == pos.shape[-1]
+    if normalize: # make density mean 1, to be used as weight
+        dens_hist /= dens_hist.mean()
+    if dens_edges is None:
+        from . import LOGGER
+        LOGGER.info('No `dens_edges` provided, assuming uniform grid in [0,1]')
+        dens_edges = [jnp.histogram_bin_edges(0, s, (0, 1))
+                      for s in dens_hist.shape]
+    frac = (pos @ jnp.linalg.inv(cell)) % 1
+    idx_list = [jnp.digitize(f, e) - 1
+                for f, e in zip(jnp.moveaxis(frac, -1, 0), dens_edges)]
+    dens_vals = dens_hist[*idx_list]
+    idx_out = jnp.stack([
+        (i < 0) | (i >= s) for i, s in zip(idx_list, dens_hist.shape)
+    ], axis=-1).any(axis=-1)
+    dens_vals = jnp.where(idx_out, jnp.inf, dens_vals)
+    return dens_vals
+
+
+def get_pair_dens_prod(
+        walker: Array, cell: Array, spins: Sequence[int],
+        dens_hist: Array, dens_edges: Sequence[Array] = None,
+        normalize: bool = False
+) -> Array:
+    assert len(spins) == dens_hist.shape[0]
+    split_idx = np.cumsum((spins))[:-1]
+    walker_split = jnp.split(walker, split_idx, axis=-2)
+    dv_split = [query_density(w, cell, dens_hist[i], dens_edges, normalize)
+                for i, w in enumerate(walker_split)]
+    dens_vals = jnp.concatenate(dv_split, axis=-1) # n_sample, n_elec
+    pair_dens = dens_vals[..., :, None] * dens_vals[..., None, :]
+    return pair_dens # n_sample, n_elec, n_elec
+
+
 def histogram_spin_blocks(
-        dis: Array, bins: Tuple[int],
-        spins: Tuple[int], xlim: Tuple[float]
+        dis: Array, bins: Sequence[int],
+        spins: Sequence[int], xlim: Sequence[float],
+        weights: Array = None
 ) -> Tuple[list, Array]:
     ndim = dis.shape[-1]
     # split displacement or distnaces by spins
     split_idx = np.cumsum((spins))[:-1]
-    dis_split = jnp.split(dis, split_idx, axis=-2)
-    dis_block = [jnp.split(d, split_idx, axis=-3) for d in dis_split]
+    dis_split = jnp.split(dis, split_idx, axis=-3)
+    dis_block = [jnp.split(d, split_idx, axis=-2) for d in dis_split]
+    if weights is not None:
+        assert weights.shape == dis.shape[:-1]
+        w_split = jnp.split(weights, split_idx, axis=-2)
+        w_block = [jnp.split(w, split_idx, axis=-1) for w in w_split]
     # histogram by spin-spin pair
     res = []
     for ii in range(len(spins)):
@@ -326,12 +381,19 @@ def histogram_spin_blocks(
             if ii == jj:
                 with jax.ensure_compile_time_eval():
                     mask = ~jnp.eye(nj, dtype=bool)
-                dflat = dblock[:, mask].reshape(-1, ndim)
+                dflat = dblock[:, mask].reshape(-1, ndim) # only 1 batch axis
+                if weights is not None:
+                    wflat = w_block[ii][jj][:, mask].reshape(-1)
             else:
                 dblock_t = dis_block[jj][ii]
                 dflat = jnp.concatenate([dblock.reshape(-1, ndim),
                                          dblock_t.reshape(-1, ndim)], axis=0)
-            hist, edges = jnp.histogramdd(dflat, bins=bins, range=[xlim] * ndim)
+                if weights is not None:
+                    wflat = jnp.concatenate([w_block[ii][jj].reshape(-1),
+                                             w_block[jj][ii].reshape(-1)], axis=0)
+            hist, edges = jnp.histogramdd(
+                dflat, bins=bins, range=[xlim] * ndim,
+                weights=wflat if weights is not None else None)
             res.append(hist)
     return res, edges
 
@@ -430,7 +492,7 @@ def project_spins(ansatz, params, x: ElecConf) -> Array:
 
 
 def gen_calc_mdens(
-        cell: Array, bins: Tuple[int],
+        cell: Array, bins: Sequence[int],
         ansatz, params: ArrayTree
 ) -> Callable:
     # same normalization as density

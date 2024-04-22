@@ -185,175 +185,176 @@ def contour_scatter(ax, xy, z, zlim=None, nz=8, cmap='viridis', fill=True,
 def main():
   from argparse import ArgumentParser
   parser = ArgumentParser()
-  parser.add_argument('prefix', type=str)
+  parser.add_argument('prefix', type=str, nargs='+')
   parser.add_argument('--spin_sum', '-ss', action='store_true')
   parser.add_argument('--savefig', '-s', action='store_true')
   parser.add_argument('--colorbar', '-cb', action='store_true')
   parser.add_argument('--verbose', '-v', action='store_true')
   args = parser.parse_args()
-  prefix = args.prefix
-  if prefix.endswith('-'):
-    prefix = prefix[:-1]  # !!!! HACK: allow common tap completion typo
 
-  meta, ym, ye = obs.load_obs(prefix)
-  spins = np.asarray(meta['spins'])
-  cell = np.asarray(meta['cell'])
-  nspin = len(spins)
-  nelec = spins.sum()
-  rs = heg_rs(cell, nelec)
+  for prefix in args.prefix:
+    if prefix.endswith('-'):
+      prefix = prefix[:-1]  # !!!! HACK: allow common tap completion typo
 
-  set_style()
-  obs_type = meta['aname']
+    meta, ym, ye = obs.load_obs(prefix)
+    spins = np.asarray(meta['spins'])
+    cell = np.asarray(meta['cell'])
+    nspin = len(spins)
+    nelec = spins.sum()
+    rs = heg_rs(cell, nelec)
 
-  if obs_type == 'density':
-    # interpret
-    rhoms, rhoes = ym/nelec, ye/nelec
-    edges = np.asarray([meta['edge0'], meta['edge1']])
-    mesh = [len(e)-1 for e in edges]
-    rvecs = bin_centers(edges)@cell/rs
-    if args.spin_sum:
-      nspin = 1
-      rhoms = rhoms.sum(axis=0)
-      rhoms = rhoms.reshape(1, *rhoms.shape)
-    # visualize
-    ny = 4
-    fig = plt.figure(figsize=(nspin*ny+1, ny))
-    axl = show_rhos(fig, rvecs, rhoms, args.colorbar)
-    for ax in axl:
-      ax.set_xlabel(r'$x/r_s$')
-      ax.set_ylabel(r'$y/r_s$')
+    set_style()
+    obs_type = meta['aname']
 
-  elif obs_type == 'mdens':  # magnetization density
-    try:
-      prefix_dens = prefix.replace('mdens', 'dens')
-      meta_rho, rhoms, rhoes = obs.load_obs(prefix_dens)
-      rhom = rhoms.sum(axis=0)/nelec
-    except FileNotFoundError:
-      rhom = None
-    # interpret
-    magm, _ = ym[0]/nelec, ye[0]/nelec
-    edges = np.asarray([meta['edge0'], meta['edge1']])
-    mesh = [len(e)-1 for e in edges]
-    rvecs = bin_centers(edges)@cell/rs
-    # visualize
-    fig = plt.figure(figsize=(12, 12))
-    axl = show_mags(fig, rvecs, magm, rhom=rhom, colorbar=args.colorbar)
-    for ax in axl:
-      ax.set_xlabel(r'$x/r_s$')
-      ax.set_ylabel(r'$y/r_s$')
+    if obs_type == 'density':
+      # interpret
+      rhoms, rhoes = ym/nelec, ye/nelec
+      edges = np.asarray([meta['edge0'], meta['edge1']])
+      mesh = [len(e)-1 for e in edges]
+      rvecs = bin_centers(edges)@cell/rs
+      if args.spin_sum:
+        nspin = 1
+        rhoms = rhoms.sum(axis=0)
+        rhoms = rhoms.reshape(1, *rhoms.shape)
+      # visualize
+      ny = 4
+      fig = plt.figure(figsize=(nspin*ny+1, ny))
+      axl = show_rhos(fig, rvecs, rhoms, args.colorbar)
+      for ax in axl:
+        ax.set_xlabel(r'$x/r_s$')
+        ax.set_ylabel(r'$y/r_s$')
 
-  elif obs_type == 'gofr':
-    grms, gres = align_spin_pair(spins, ym, ye,
-                                 spin_sum=args.spin_sum,
-                                 normalize=meta['normalize'])
-    r = np.asarray(meta['r'])
-    x = r/rs
-    # visualize
-    ylabel = 'g(r)'
-    nplts = grms.shape[0]
-    fig, axl = plt.subplots(nplts, 1, sharex=True)
-    if nplts == 1:
-      axl = [axl]
-    else:
-      axl[-1].set_ylabel('spin ' + ylabel)
-      axl[-1].axhline(0, c='k', lw=0.6)
-    axl[-1].set_xlabel(r'$r/r_s$')
-    axl[0].set_ylabel(ylabel)
-    axl[0].axhline(1, c='k', lw=0.6)
-    for ax, grm, gre in zip(axl, grms, gres):
+    elif obs_type == 'mdens':  # magnetization density
+      try:
+        prefix_dens = prefix.replace('mdens', 'dens')
+        meta_rho, rhoms, rhoes = obs.load_obs(prefix_dens)
+        rhom = rhoms.sum(axis=0)/nelec
+      except FileNotFoundError:
+        rhom = None
+      # interpret
+      magm, _ = ym[0]/nelec, ye[0]/nelec
+      edges = np.asarray([meta['edge0'], meta['edge1']])
+      mesh = [len(e)-1 for e in edges]
+      rvecs = bin_centers(edges)@cell/rs
+      # visualize
+      fig = plt.figure(figsize=(12, 12))
+      axl = show_mags(fig, rvecs, magm, rhom=rhom, colorbar=args.colorbar)
+      for ax in axl:
+        ax.set_xlabel(r'$x/r_s$')
+        ax.set_ylabel(r'$y/r_s$')
+
+    elif obs_type == 'gofr':
+      grms, gres = align_spin_pair(spins, ym, ye,
+                                   spin_sum=args.spin_sum,
+                                   normalize=meta['normalize'])
+      r = np.asarray(meta['r'])
+      x = r/rs
+      # visualize
+      ylabel = 'g(r)'
+      nplts = grms.shape[0]
+      fig, axl = plt.subplots(nplts, 1, sharex=True)
+      if nplts == 1:
+        axl = [axl]
+      else:
+        axl[-1].set_ylabel('spin ' + ylabel)
+        axl[-1].axhline(0, c='k', lw=0.6)
+      axl[-1].set_xlabel(r'$r/r_s$')
+      axl[0].set_ylabel(ylabel)
+      axl[0].axhline(1, c='k', lw=0.6)
+      for ax, grm, gre in zip(axl, grms, gres):
+        ax.set_xlim(0, x.max())
+        ax.errorbar(x, grm, gre)
+
+    elif obs_type == 'vecgofr':
+      # interpret
+      gvms, gves = align_spin_pair(spins, ym, ye,
+                                   spin_sum=args.spin_sum,
+                                   normalize=meta['normalize'])
+      edges = np.asarray([meta['edge0'], meta['edge1']])
+      mesh = [len(e)-1 for e in edges]
+      rvecs = bin_centers(edges)@cell/rs
+      # visualize
+      ny = 4
+      nplts = gvms.shape[0]
+      fig = plt.figure(figsize=(nplts*ny+1, ny))
+      axl = []
+      for i in range(nplts):
+        ax = fig.add_subplot(1, nplts, i+1, aspect=1)
+        axl.append(ax)
+      for ax in axl:
+        ax.set_xlabel(r'$x/r_s$')
+        ax.set_ylabel(r'$y/r_s$')
+      #   total
+      ax = axl[0]
+      cs = contour_scatter(ax, rvecs, gvms[0].ravel(), mesh=mesh)
+      if args.colorbar: plt.colorbar(cs, fraction=0.046, pad=0.04)
+      #   difference
+      if nplts > 1:
+        ax = axl[1]
+        dgvm = gvms[1]
+        smax = max(dgvm.max(), abs(dgvm.min()))
+        zlim = (-smax, smax)
+        cs = contour_scatter(ax, rvecs, dgvm.ravel(), mesh=mesh, zlim=zlim, cmap='coolwarm')
+        if args.colorbar: plt.colorbar(cs)
+
+    elif obs_type in ['sofk', 'dsk', 'rhok']:
+      # interpret
+      skms, skes = spin_split(spins, ym, ye)
+      skms /= nelec
+      skes /= nelec
+      if args.spin_sum:
+        nspin = 1
+        skm, ske = spin_sum(skms, skes)
+        skms = skm[None]
+        skes = ske[None]
+      else:
+        skms = np.array([skms[0]+skms[1], skms[0]-skms[1]])
+        skes = np.array([(skes[0]**2+skes[1]**2)**0.5]*2)
+      kvecs = np.asarray(meta['kvecs'])
+      kmags = np.linalg.norm(kvecs, axis=-1)
+      x = kmags*rs
+      # visualize
+      ylabel = {'sofk': 'S(k)', 'dsk': r'$\delta$S(k)', 'rhok': r'$Re[\rho_k]$'}[obs_type]
+      fig, axl = plt.subplots(nspin, 1, sharex=True)
+      if nspin == 1:
+        axl = [axl]
+      else:
+        axl[-1].set_ylabel('spin ' + ylabel)
+      axl[-1].set_xlabel(r'$k r_s$')
+      ax = axl[0]
+      ax.set_ylabel(ylabel)
+      for ax, skm, ske in zip(axl, skms, skes):
+        ax.set_xlim(0, x.max())
+        ymax = skm.real.max()
+        ax.set_ylim(0, 1.05*ymax)
+        ax.axhline(1, c='k', lw=0.6)
+        ax.errorbar(x, skm.real, ske.real, ls='', marker='.')
+
+    elif obs_type in ['nofk']:
+      # interpret
+      nkm, nke = ym[0], ye[0]
+      kvecs = np.asarray(meta['kvecs'])
+      kmags = np.linalg.norm(kvecs, axis=-1)
+      kf = 2./rs/nspin**0.5
+      x = kmags/kf
+      # visualize
+      fig, ax = plt.subplots(1, 1)
+      ax.axhline(0, c='k')
+      ax.set_xlabel(r'$k/k_F$')
       ax.set_xlim(0, x.max())
-      ax.errorbar(x, grm, gre)
+      ax.set_ylabel('n(k)')
+      ax.errorbar(x, nkm, nke, ls='', marker='.')
 
-  elif obs_type == 'vecgofr':
-    # interpret
-    gvms, gves = align_spin_pair(spins, ym, ye,
-                                 spin_sum=args.spin_sum,
-                                 normalize=meta['normalize'])
-    edges = np.asarray([meta['edge0'], meta['edge1']])
-    mesh = [len(e)-1 for e in edges]
-    rvecs = bin_centers(edges)@cell/rs
-    # visualize
-    ny = 4
-    nplts = gvms.shape[0]
-    fig = plt.figure(figsize=(nplts*ny+1, ny))
-    axl = []
-    for i in range(nplts):
-      ax = fig.add_subplot(1, nplts, i+1, aspect=1)
-      axl.append(ax)
-    for ax in axl:
-      ax.set_xlabel(r'$x/r_s$')
-      ax.set_ylabel(r'$y/r_s$')
-    #   total
-    ax = axl[0]
-    cs = contour_scatter(ax, rvecs, gvms[0].ravel(), mesh=mesh)
-    if args.colorbar: plt.colorbar(cs, fraction=0.046, pad=0.04)
-    #   difference
-    if nplts > 1:
-      ax = axl[1]
-      dgvm = gvms[1]
-      smax = max(dgvm.max(), abs(dgvm.min()))
-      zlim = (-smax, smax)
-      cs = contour_scatter(ax, rvecs, dgvm.ravel(), mesh=mesh, zlim=zlim, cmap='coolwarm')
-      if args.colorbar: plt.colorbar(cs)
-
-  elif obs_type in ['sofk', 'dsk', 'rhok']:
-    # interpret
-    skms, skes = spin_split(spins, ym, ye)
-    skms /= nelec
-    skes /= nelec
-    if args.spin_sum:
-      nspin = 1
-      skm, ske = spin_sum(skms, skes)
-      skms = skm[None]
-      skes = ske[None]
     else:
-      skms = np.array([skms[0]+skms[1], skms[0]-skms[1]])
-      skes = np.array([(skes[0]**2+skes[1]**2)**0.5]*2)
-    kvecs = np.asarray(meta['kvecs'])
-    kmags = np.linalg.norm(kvecs, axis=-1)
-    x = kmags*rs
-    # visualize
-    ylabel = {'sofk': 'S(k)', 'dsk': r'$\delta$S(k)', 'rhok': r'$Re[\rho_k]$'}[obs_type]
-    fig, axl = plt.subplots(nspin, 1, sharex=True)
-    if nspin == 1:
-      axl = [axl]
+      msg = 'no "%s"' % obs_type
+      raise RuntimeError(msg)
+
+    fig.tight_layout()
+    if args.savefig:
+      fig_loc = f"plot_{obs_type}.pdf"
+      fig.savefig(fig_loc)
     else:
-      axl[-1].set_ylabel('spin ' + ylabel)
-    axl[-1].set_xlabel(r'$k r_s$')
-    ax = axl[0]
-    ax.set_ylabel(ylabel)
-    for ax, skm, ske in zip(axl, skms, skes):
-      ax.set_xlim(0, x.max())
-      ymax = skm.real.max()
-      ax.set_ylim(0, 1.05*ymax)
-      ax.axhline(1, c='k', lw=0.6)
-      ax.errorbar(x, skm.real, ske.real, ls='', marker='.')
-
-  elif obs_type in ['nofk']:
-    # interpret
-    nkm, nke = ym[0], ye[0]
-    kvecs = np.asarray(meta['kvecs'])
-    kmags = np.linalg.norm(kvecs, axis=-1)
-    kf = 2./rs/nspin**0.5
-    x = kmags/kf
-    # visualize
-    fig, ax = plt.subplots(1, 1)
-    ax.axhline(0, c='k')
-    ax.set_xlabel(r'$k/k_F$')
-    ax.set_xlim(0, x.max())
-    ax.set_ylabel('n(k)')
-    ax.errorbar(x, nkm, nke, ls='', marker='.')
-
-  else:
-    msg = 'no "%s"' % obs_type
-    raise RuntimeError(msg)
-
-  fig.tight_layout()
-  if args.savefig:
-    fig_loc = f"plot_{obs_type}.pdf"
-    fig.savefig(fig_loc)
-  else:
-    plt.show()
+      plt.show()
 
 if __name__ == '__main__':
   main()  # set no global variable
