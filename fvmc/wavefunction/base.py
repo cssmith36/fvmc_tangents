@@ -6,6 +6,7 @@ from typing import Any, Callable, Sequence, Tuple
 import jax
 from flax import linen as nn
 from jax import numpy as jnp
+from jax import tree_util as jtu
 
 from ..utils import ElecConf, NuclConf, Array
 
@@ -42,18 +43,6 @@ class ElecWfn(nn.Module, abc.ABC):
     def __call__(self, x: Array) -> Tuple[Array, Array]:
         """Take only the electron position x, return sign and log|psi|"""
         raise NotImplementedError
-
-
-@dataclasses.dataclass
-class FakeModel:
-    fn: Callable
-    init_params: Any
-
-    def init(self, *args, **kwargs):
-        return self.init_params
-
-    def apply(self, params, *args):
-        return self.fn(params, *args)
 
 
 class FixNuclei(ElecWfn):
@@ -100,3 +89,42 @@ class ProductModel(FullWfn):
             return sign, logf
         else:
             return logf
+
+
+@dataclasses.dataclass
+class FakeModel:
+    fn: Callable
+    init_params: Any
+
+    def init(self, *args, **kwargs):
+        return self.init_params
+
+    def apply(self, params, *args, **kwargs):
+        return self.fn(params, *args, **kwargs)
+
+
+@dataclasses.dataclass
+class FrozenModel:
+    model: nn.Module
+    frozen_params: Any
+
+    def init(self, rng, *args, **kwargs):
+        raw_params = self.model.init(rng, *args, **kwargs)
+        return jtu.tree_map(
+            lambda x, y: y if x is None else None,
+            self.frozen_params, raw_params, is_leaf=_is_none)
+
+    def apply(self, params, *args, **kwargs):
+        all_params = jtu.tree_map(
+            lambda x, y: y if x is None else x,
+            self.frozen_params, params, is_leaf=_is_none)
+        return self.model.apply(all_params, *args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        if hasattr(nn.Module, name):
+            raise AttributeError(
+                "only `init` and `apply` are allowed in FrozenModel")
+        return getattr(self.model, name)
+
+
+_is_none = lambda x: x is None
