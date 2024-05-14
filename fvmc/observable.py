@@ -336,7 +336,7 @@ def query_density(
     frac = (pos @ jnp.linalg.inv(cell)) % 1
     idx_list = [jnp.digitize(f, e) - 1
                 for f, e in zip(jnp.moveaxis(frac, -1, 0), dens_edges)]
-    dens_vals = dens_hist[*idx_list]
+    dens_vals = dens_hist[tuple(idx_list)]
     idx_out = jnp.stack([
         (i < 0) | (i >= s) for i, s in zip(idx_list, dens_hist.shape)
     ], axis=-1).any(axis=-1)
