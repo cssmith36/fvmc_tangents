@@ -255,7 +255,7 @@ def gen_calc_vecgofr(
         disp = disp @ invvec
         nsample = len(disp)
         weights = (1 / get_pair_dens_prod(walker, cell, spins,
-                                          dens_hist, dens_edges, normalize=True)
+                                          dens_hist, dens_edges, fix_norm=True)
                    if dens_hist is not None else None)
         hists, edges = histogram_spin_blocks(disp, bins, spins, (-0.5, 0.5),
                                              weights=weights)
@@ -291,7 +291,7 @@ def gen_calc_gofr(
         dist = dist[:, :, :, None] # [-1, nelec, nelec, ndim]
         nsample = dist.shape[0]
         weights = (1 / get_pair_dens_prod(walker, cell, spins,
-                                          dens_hist, dens_edges, normalize=True)
+                                          dens_hist, dens_edges, fix_norm=True)
                    if dens_hist is not None else None)
         # count
         hists, edges = histogram_spin_blocks(dist, bins, spins, (0, rcut),
@@ -322,11 +322,11 @@ def gofr_norm_factor(cell: Array, bin_edges: Array) -> Array:
 def query_density(
         pos: Array, cell: Array,
         dens_hist: Array, dens_edges: Sequence[Array] = None,
-        normalize: bool = False
+        fix_norm: bool = False
 ) -> Array:
     ndim = dens_hist.ndim
     assert ndim == pos.shape[-1]
-    if normalize: # make density mean 1, to be used as weight
+    if fix_norm: # make density mean 1, to be used as weight
         dens_hist /= dens_hist.mean()
     if dens_edges is None:
         from . import LOGGER
@@ -347,12 +347,12 @@ def query_density(
 def get_pair_dens_prod(
         walker: Array, cell: Array, spins: Sequence[int],
         dens_hist: Array, dens_edges: Sequence[Array] = None,
-        normalize: bool = False
+        fix_norm: bool = False
 ) -> Array:
     assert len(spins) == dens_hist.shape[0]
     split_idx = np.cumsum((spins))[:-1]
     walker_split = jnp.split(walker, split_idx, axis=-2)
-    dv_split = [query_density(w, cell, dens_hist[i], dens_edges, normalize)
+    dv_split = [query_density(w, cell, dens_hist[i], dens_edges, fix_norm)
                 for i, w in enumerate(walker_split)]
     dens_vals = jnp.concatenate(dv_split, axis=-1) # n_sample, n_elec
     pair_dens = dens_vals[..., :, None] * dens_vals[..., None, :]
