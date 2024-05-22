@@ -38,6 +38,7 @@ def main():
     # set up folder to cache results
     tname = os.path.basename(args.ftraj)
     cache_dir = 'cache-' + tname[:tname.rfind('.')] + '-obs'
+    cache_dir += f"-nx{args.nx}" if args.nx != 48 else ""
 
     # read metadata
     meta_sys = obs.read_meta(args.fyml)
