@@ -282,6 +282,7 @@ def build_training_step(sampler, optimizer):
         key, params, mc_state, opt_state = train_state
         key, mckey, optkey = rng_split(key, 3)
         mc_state, data, mc_info = sampler.sample(mckey, params, mc_state)
+        exc_mc_state, exc_data, exc_mc_info = exc_sampler.sample(mckey, params, mc_state)
         params, opt_state, opt_info = optimizer.step(params, opt_state, optkey, batch=data)
         mc_state = sampler.refresh(mc_state, params)
         return TrainingState(key, params, mc_state, opt_state), (mc_info, opt_info), data

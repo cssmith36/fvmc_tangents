@@ -32,10 +32,18 @@ def calc_pe(elems, r, x):
     return el_el + el_ion + ion_ion
 
 
-def laplacian_over_f(log_f, scale=None, forward_mode=False, partition_size=1):
+def laplacian_over_f(log_f, scale=None, forward_mode=True, partition_size=1):
     # (\nable^2 f) / f = \nabla^2 log|f| + (\nabla log|f|)^2
+    # handle potential forward mode
     if forward_mode:
-        import fwdlap
+        try:
+            import fwdlap
+        except ImportError:
+            from . import LOGGER
+            LOGGER.warning("fwdlap is not installed, use normal backward mode instead.")
+            forward_mode = False
+
+    # handle scale (can be used to set mass of particles)
     scale = ravel_pytree(scale)[0] if scale is not None else jnp.array([1.0])
 
     # normal bwd-fwd hessian version
@@ -82,7 +90,7 @@ def laplacian_over_f(log_f, scale=None, forward_mode=False, partition_size=1):
     return _lapl_forward if forward_mode else _lapl_backward
 
 
-def calc_ke_elec(log_psi, x, *, forward_mode=False, partition_size=1):
+def calc_ke_elec(log_psi, x, *, forward_mode=True, partition_size=1):
     # calc -0.5 * (\nable^2 \psi) / \psi
     # handle batch of x automatically
     lapl_fn = laplacian_over_f(
@@ -93,7 +101,7 @@ def calc_ke_elec(log_psi, x, *, forward_mode=False, partition_size=1):
     return -0.5 * lapl_fn(x)
 
 
-def calc_ke_full(log_psi, mass, r, x, *, forward_mode=False, partition_size=1):
+def calc_ke_full(log_psi, mass, r, x, *, forward_mode=True, partition_size=1):
     # calc -0.5 * (\nable^2 \psi) / \psi
     # handle batch of r, x automatically
     mass = jnp.reshape(mass, -1)

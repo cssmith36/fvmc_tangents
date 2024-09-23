@@ -11,17 +11,18 @@ del logging
 
 __all__ = [
     "utils",
+    "moire",
     "ewaldsum",
     "hamiltonian",
     "sampler",
     "estimator",
-    "excited_states",
     "optimizer",
     "preconditioner",
     "wavefunction",
     "config",
     "train",
     "observable",
+    "tangents",
 ]
 
 def __getattr__(name):

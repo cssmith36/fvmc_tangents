@@ -4,6 +4,7 @@ import dataclasses
 from typing import Any, Callable, Sequence, Tuple
 
 import jax
+import flax
 from flax import linen as nn
 from jax import numpy as jnp
 from jax import tree_util as jtu
@@ -22,6 +23,17 @@ def model_wrapper(model: nn.Module,
         # raise TypeError(f"unsupoorted model type {type(model)}")
         return lambda p, *a, **kw: wrap_out(*model.apply(p, *a, **kw))
 
+def frozen_model_wrapper(model: nn.Module,
+                  wrap_out: Callable[[Array, Array], Any]):
+    # switch between different model type
+    if isinstance(model, FullWfn): # combine r, x into a tuple conf = (r, x)
+        return lambda p, p2, conf: wrap_out(*model.apply(p, p2, *conf))
+    elif isinstance(model, ElecWfn): # electron only case
+        return lambda p, p2, x: wrap_out(*model.apply(p, p2, x))
+    else: # fall back for any model
+        # raise TypeError(f"unsupoorted model type {type(model)}")
+        return lambda p, p2, *a, **kw: wrap_out(*model.apply(p, p2, *a, **kw))
+
 def _wrap_sign(sign, logp):
     if jnp.iscomplexobj(sign):
         logp += jnp.log(sign)
@@ -29,6 +41,7 @@ def _wrap_sign(sign, logp):
 
 log_prob_from_model = functools.partial(model_wrapper, wrap_out=lambda s, l: 2*l)
 log_psi_from_model = functools.partial(model_wrapper, wrap_out=_wrap_sign)
+log_psi_from_frozen_model = functools.partial(frozen_model_wrapper, wrap_out=_wrap_sign)
 
 
 class FullWfn(nn.Module, abc.ABC):
@@ -126,5 +139,58 @@ class FrozenModel:
                 "only `init` and `apply` are allowed in FrozenModel")
         return getattr(self.model, name)
 
+@dataclasses.dataclass
+class FrozenModelD2:
+    model: nn.Module
+    frozen_params: Any
+
+    def init(self, rng, *args, **kwargs):
+        raw_params = self.model.init(rng, *args, **kwargs)
+        return jtu.tree_map(
+            lambda x, y: y if x is None else None,
+            self.frozen_params, raw_params, is_leaf=_is_none)
+
+    def apply(self, params,backflow_params, *args, **kwargs):
+        if backflow_params:
+            params['params'][str(self.frozen_params)] = backflow_params
+        #all_params = jtu.tree_map(
+        #    lambda x, y: y if x is None else x,
+        #    self.frozen_params, params, is_leaf=_is_none)
+        return self.model.apply(params, *args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        if hasattr(nn.Module, name):
+            raise AttributeError(
+                "only `init` and `apply` are allowed in FrozenModel")
+        return getattr(self.model, name)
+
+
+@dataclasses.dataclass
+class FrozenModelD3:
+    model: nn.Module
+    frozen_params: Any
+
+    #def init(self, rng, *args, **kwargs):
+    #    raw_params = self.model.init(rng, *args, **kwargs)
+    #    return jtu.tree_map(
+    #        lambda x, y: y if x is None else None,
+    #        self.frozen_params, raw_params, is_leaf=_is_none)
+
+    def apply(self, d2params, d1params, *args, **kwargs):
+        
+        params = flax.core.copy(d1params)
+        params['params']['submodels_0']['PlanewaveOrbital_0']['Dense_0']['kernel'] = d1params['params']['submodels_0']['PlanewaveOrbital_0']['Dense_0']['kernel'].at[21-4:21+4,:].set(d2params)
+
+        #replaced_params = params.at[21-5:21+5,:].set(d2params)
+        #d1params['params']['submodels_0']['PlanewaveOrbital_0']['Dense_0']['kernel'] = replaced_params
+        
+
+        return self.model.apply(params, *args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        if hasattr(nn.Module, name):
+            raise AttributeError(
+                "only `init` and `apply` are allowed in FrozenModel")
+        return getattr(self.model, name)
 
 _is_none = lambda x: x is None

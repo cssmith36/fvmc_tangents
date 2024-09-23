@@ -6,6 +6,7 @@ from .base import (
     ProductModel,
     log_prob_from_model,
     log_psi_from_model,
+    log_psi_from_frozen_model,
     model_wrapper,
 )
 

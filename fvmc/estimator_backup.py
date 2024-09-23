@@ -13,15 +13,12 @@ from .utils import (PMAP_AXIS_NAME, ElecConf, FullConf, PmapAxis, exp_shifted,
                     split_spin, attach_spin)
 
 
-def get_log_psi(model_apply, params, backflow_params=None, stop_gradient=False):
+def get_log_psi(model_apply, params, stop_gradient=False):
     # make log of wavefunction from model.apply
-    if stop_gradient and backflow_params == None:
+    if stop_gradient:
         params = lax.stop_gradient(params)
     def log_psi(*args):
-        if backflow_params != None:
-            sign, logd = model_apply(params, backflow_params, *args)
-        else:
-            sign, logd = model_apply(params, *args)
+        sign, logd = model_apply(params, *args)
         if jnp.iscomplexobj(sign):
             logd += jnp.log(sign)
         return logd
@@ -94,17 +91,10 @@ def build_eval_local_elec(model, elems, nuclei, cell=None, *,
     extpot_fns = parse_ext_pots(ext_pots, elems=elems, nuclei=nuclei, cell=cell)
     spinpot_fns = parse_spin_pots(spin_pots, elems=elems, nuclei=nuclei, cell=cell)
 
-    def eval_local(params, x: ElecConf, backflow_params=None):
-        if backflow_params != None:
-            frozen_params = params
-            #backflow_params = params[1]
-            sign, logf = model.apply(frozen_params,backflow_params, x)
-            log_psi_fn = get_log_psi(model.apply, frozen_params, backflow_params=backflow_params,
-                                    stop_gradient=stop_gradient)
-        else:
-            sign, logf = model.apply(params, x) # may be overwritten by slog_and_pauli
-            log_psi_fn = get_log_psi(model.apply, params,
-                                    stop_gradient=stop_gradient)
+    def eval_local(params, x: ElecConf):
+        sign, logf = model.apply(params, x) # may be overwritten by slog_and_pauli
+        log_psi_fn = get_log_psi(model.apply, params,
+                                 stop_gradient=stop_gradient)
         x_c, x_s = split_spin(x) # coords and spins, x_s can be None
         log_psi_partial = lambda x_c: log_psi_fn(attach_spin(x_c, x_s))
         ene_comps = {
@@ -213,7 +203,7 @@ def clip_around(a, target, half_range, stop_gradient=True):
     c_max = target + half_range
     if stop_gradient:
         c_max, c_min = map(lax.stop_gradient, (c_max, c_min))
-    return jnp.clip(a, c_min, c_max)
+    return jnp.maximum(jnp.minimum(a, c_max), c_min) # conly compare real part
 
 
 def build_eval_total(eval_local_fn, energy_clipping=None,

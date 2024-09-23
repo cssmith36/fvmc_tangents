@@ -18,16 +18,13 @@ def default() -> ConfigDict:
             "states": None,
         },
 
-        "system": {
-            "nuclei": [[0., 0., 0.], [0., 0., 1.]],
-            "elems": [1., 1.],
-            "charge": 0,
-            "spin": None,
-            "cell": None,
-        },
+        "system": system_placeholder(),
+
+        "penalty_method": penalty_method(),
 
         #TODO make a default ansatz parameters
-        "ansatz": {},
+        "ansatz": {"freeze_params":False,
+                   "split_params":None},
 
         "sample": {
             "size": 2048,
@@ -51,7 +48,7 @@ def default() -> ConfigDict:
         },
 
         "optimize": {
-            "iterations": 100_000,
+            "iterations": 100,
             "lr": {},
             "optimizer": "kfac",
             "grad_clipping": None, # will not work for kfac
@@ -61,7 +58,7 @@ def default() -> ConfigDict:
 
         "log": {
             "stat_path": "data.txt",
-            "stat_every": 100,
+            "stat_every": 1,
             "stat_keep": 2, # only back up once, avoid clutter
             "ckpt_path": "checkpoint.pkl",
             "ckpt_every": 100,
@@ -75,3 +72,65 @@ def default() -> ConfigDict:
         },
 
     }, type_safe=False)
+
+
+def default_tangents() -> ConfigDict:
+    return ConfigDict({
+
+        "verbosity": "WARNING",
+
+        "system": system_placeholder(),
+
+        "ansatz": {},
+
+        "sample": {
+            "size": 2048,
+            "chains": None,
+            "burn_in": 100,
+            "sampler": "mcmc",
+            "mcmc": {},
+            "mala": {},
+            "hmc": {},
+            "black": {},
+            "adaptive": None,
+        },
+
+        "eval_tangents": eval_tangents(),
+
+        "restart": {
+            "params": "checkpoint.pkl",
+            "chains": None,
+            "states": None,
+        },
+
+    }, type_safe=False)
+
+
+def eval_tangents() -> ConfigDict:
+    return ConfigDict({
+            "ke_kwargs": {"partition_size": None},
+            "pe_kwargs": {},
+            "reweighting": False,
+            "iterations": 100,
+            "dev_2": False,
+            "eval_obs": False,
+            "evecs": None,
+            "save_folder": "tangents/",
+            "dense_mode": False,
+        }, type_safe=False)
+
+def penalty_method() -> ConfigDict:
+    return ConfigDict({
+        "gs_ansatz": {}
+    })
+
+
+def system_placeholder() -> ConfigDict:
+    return ConfigDict({
+        "nuclei": [[0., 0., 0.], [0., 0., 1.]],
+        "elems": [1., 1.],
+        "charge": 0,
+        "spin": None,
+        "cell": None,
+    }, type_safe=False)
+

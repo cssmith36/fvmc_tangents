@@ -42,6 +42,14 @@ class MCSampler(NamedTuple):
             key, subkey = adaptive_split(key, multi_device=key.ndim>1)
             state = self.sample(subkey, params, state)[0]
         return state
+    def burn_in_tangent(self, key: KeyArray, params: Params, weights: Array, state: State, steps: int):
+        """Burn in the state for given steps"""
+        # inner = lambda s,k: (self.sample(k, params, s)[0], None)
+        # return lax.scan(inner, state, jax.random.split(key, steps))[0]
+        for _ in range(steps):
+            key, subkey = adaptive_split(key, multi_device=key.ndim>1)
+            state = self.sample(subkey, params, weights, state)[0]
+        return state
 
 
 def choose_sampler_builder(name: str) -> Callable[..., MCSampler]:
@@ -50,6 +58,8 @@ def choose_sampler_builder(name: str) -> Callable[..., MCSampler]:
         return build_gaussian
     if name in ("metropolis", "mcmc", "mh"):
         return build_metropolis
+    if name in ("langevin_tangent","mala_tangent"):
+        return build_tangent_langevin
     if name in ("langevin", "mala"):
         return build_langevin
     if name in ("hamiltonian", "hybrid", "hmc"):
@@ -102,6 +112,19 @@ def build_sampler(log_prob_fn: Callable[[Params, Sample], Array],
     logdens_fn = lambda p, x: beta * log_prob_fn(p, x)
     return builder(logdens_fn, shape_or_init, **kwargs)
 
+def build_tangent_sampler(log_prob_fn: Callable[[Params, Sample], Array],
+                  shape_or_init: Union[tuple, np.ndarray, callable],
+                  name: str,
+                  adaptive: Union[None, bool, dict] = None,
+                  beta: float = 1,
+                  **kwargs):
+    if adaptive is not None and adaptive is not False:
+        adaptive = {} if adaptive is True else adaptive
+        builder = choose_adaptive_builder(name, **adaptive)
+    else:
+        builder = choose_sampler_builder(name)
+    logdens_fn = lambda p, w, x: beta * log_prob_fn(p, w, x)
+    return builder(logdens_fn, shape_or_init, **kwargs)
 
 def build_conf_init_fn(elems, nuclei, n_elec,
                        sigma_x=1., with_r=False, sigma_r=0.1):
@@ -151,6 +174,21 @@ def make_batched(sampler: MCSampler, n_batch: int, concat: bool = False,
     refresh = vaxis.vmap(refresh_fn, (0, None))
     return MCSampler(sample, init, refresh)
 
+def make_tangent_batched(sampler: MCSampler, n_batch: int, concat: bool = False,
+                 vmap_axis_name: str = MC_BATCH_AXIS_NAME):
+    sample_fn, init_fn, refresh_fn = sampler
+    vaxis = PmapAxis(vmap_axis_name)
+    def sample(key, params, weights, state):
+        vkey = jax.random.split(key, n_batch)
+        new_state, *res = vaxis.vmap(sample_fn, (0, None, None, 0))(vkey, params, weights, state)
+        if concat:
+            res = jtu.tree_map(jnp.concatenate, res)
+        return new_state, *res
+    def init(key, params,weights):
+        vkey = jax.random.split(key, n_batch)
+        return vaxis.vmap(init_fn, (0, None, None))(vkey, params, weights)
+    refresh = vaxis.vmap(refresh_fn, (0, None, None))
+    return MCSampler(sample, init, refresh)
 
 def make_multistep(sampler: MCSampler, n_step: int, concat: bool = False):
     sample_fn, init_fn, refresh_fn = sampler
@@ -170,6 +208,17 @@ def make_multistep_fn(sample_fn, n_step, concat=False):
         return new_state, *res
     return multi_sample
 
+def make_multistep_fn_tangent(sample_fn, n_step, concat=False):
+    def _split_output(out): # to satisfy scan requirement
+        return out[0], out[1:]
+    def multi_sample(key, params, weights, state):
+        inner = lambda s,k: _split_output(sample_fn(k, params, weights, s))
+        keys = jax.random.split(key, n_step)
+        new_state, res = lax.scan(inner, state, keys)
+        if concat:
+            res = jtu.tree_map(jnp.concatenate, res)
+        return new_state, *res
+    return multi_sample
 
 def make_chained(*samplers):
     # chain multiple sampler, always refresh
@@ -375,6 +424,49 @@ def build_langevin(logdens_fn, shape_or_init, tau=0.1, steps=10,
 
     return MCSampler(sample, init, refresh)
 
+def build_tangent_langevin(logdens_fn, shape_or_init, tau=0.1, steps=10,
+                   mass=1., grad_clipping=None):
+    # shape and constants
+    sample_shape = _extract_sample_shape(shape_or_init)
+    xsize, unravel = ravel_shape(sample_shape)
+    mass = _align_vector(mass, sample_shape)
+    tau = tau / mass
+    # prepare functions
+    if grad_clipping is not None: grad_clipping *= jnp.sqrt(mass)
+    ravel_logd = lambda p, w, x: logdens_fn(p, w, unravel(_gclip(x, grad_clipping)))
+    logd_and_grad = jax.value_and_grad(ravel_logd, 2)
+
+    # log transition probability q(x2|x1)
+    def log_q(x2, x1, g1):
+        d = x2 - x1 - tau * g1
+        norm2 = (d * d.conj()).real
+        return (-1/(4*tau) * norm2).sum(-1)
+
+    def step(key, params, weights, state):
+        x1, g1, ld1 = state
+        gkey, ukey = jax.random.split(key)
+        x2 = x1 + tau*g1 + jnp.sqrt(2*tau)*jax.random.normal(gkey, shape=x1.shape)
+        ld2, g2 = logd_and_grad(params, weights, x2)
+        g2 = g2.conj() # handle complex grads, no influence for real case
+        ratio = ld2 + log_q(x1, x2, g2) - ld1 - log_q(x2, x1, g1)
+        return (*mh_select(ukey, ratio, state, (x2, g2, ld2)), ratio)
+
+    def sample(key, params, weights, state):
+        multi_step = make_multistep_fn_tangent(step, steps, concat=False)
+        new_state, accepted, log_ratio = multi_step(key, params, weights, state)
+        new_sample, new_grads, new_logdens = new_state
+        info = {"is_accepted": accepted.mean(),
+                "recip_ratio": _recip_ratio(log_ratio).mean()}
+        return new_state, (unravel(new_sample), new_logdens), info
+
+    def refresh(state, params, weights):
+        sample = state[0]
+        ld_new, grads_new = logd_and_grad(params, weights, sample)
+        return (sample, grads_new.conj(), ld_new)
+
+    init = _gen_init_from_refresh_tangent(refresh, shape_or_init)
+
+    return MCSampler(sample, init, refresh)
 
 def build_hamiltonian(logdens_fn, shape_or_init, dt=0.1, length=1.,
                       steps=None, segments=1, mass=1., speed_limit=None,
@@ -587,6 +679,23 @@ def _gen_init_from_refresh(refresh_fn, shape_or_init):
 
     return init
 
+def _gen_init_from_refresh_tangent(refresh_fn, shape_or_init):
+    # shape_or_init is either a pytree of shapes
+    # or a init function that take a key and give an init x
+    with jax.ensure_compile_time_eval():
+        if not callable(shape_or_init):
+            size, unravel = ravel_shape(shape_or_init)
+            mu, sigma = 0., 1.
+            raw_init = lambda key: jax.random.normal(key, (size,)) * sigma + mu
+        else:
+            from jax.flatten_util import ravel_pytree
+            raw_init = lambda key: ravel_pytree(shape_or_init(key))[0]
+
+    def init(key, params, weights):
+        sample = raw_init(key)
+        return refresh_fn((sample,), params, weights)
+
+    return init
 
 def _align_vector(vec, sample_shape):
     xsize, unravel = ravel_shape(sample_shape)

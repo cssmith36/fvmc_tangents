@@ -5,10 +5,8 @@ import jax
 from flax import linen as nn
 from jax import numpy as jnp
 
-from ..utils import (Array, ElecConf, _t_real, build_mlp, parse_activation,
-                     attach_spin, split_spin)
+from ..utils import Array, _t_real, build_mlp, parse_activation
 from .base import ElecWfn
-from .heg import heg_rs
 from .neuralnet_pbc import raw_features_pbc
 
 
@@ -17,28 +15,24 @@ class NeuralBackflow(nn.Module):
     cell: Array
     single_size: int = 32 # size of h_i, before concat with x0_i
     pair_size: int = 26 # size of h_ij, before concat with x0_ij (size 6 for 2D)
-    mlp_width: int = 32 # width of the mlp of the message passing layer
+    mlp_width: int = 32 # width of the hidden layers in the MLP
+    jas_width: int = 30 # width of the hidden layers in the jastrow
     attn_width: int = 32 # width of the message passing layer m_ij
-    backflow_scale: float = 0.03 # hardcoded scale of the backflow shift (in rs)
     backflow_layers: int = 3 # number of message passing layers
-    jastrow_width: int = 32 # width of the hidden layers in the jastrow mlp
     jastrow_layers: int = 3 # number of layers in the jastrow mlp
     activation: Union[Callable, str] = "gelu"
     kernel_init: Callable = nn.linear.default_kernel_init
 
     @nn.compact
-    def __call__(self, x: ElecConf) -> Tuple[ElecConf, Tuple[float, float]]:
+    def __call__(self, x):
         # set up constants
-        x, _s = split_spin(x)
         n_elec, n_dim = x.shape
-        assert not self.spins or sum(self.spins) == n_elec
+        assert sum(self.spins) == n_elec
         actv_fn = parse_activation(self.activation)
-        MyDense = partial(nn.Dense, param_dtype=_t_real, kernel_init=self.kernel_init)
         # input independent arrays
         with jax.ensure_compile_time_eval():
             invvec = jnp.linalg.inv(self.cell)
-            rs = heg_rs(self.cell, n_elec)
-            if not self.spins or len(self.spins) == 1: # all same spin, no need to compute s_ij
+            if len(self.spins) == 1: # all same spin, no need to compute s_ij
                 s_ij = jnp.zeros((n_elec, n_elec, 1))
             else:
                 assert len(self.spins) == 2, "only support 2 type of spins"
@@ -60,24 +54,23 @@ class NeuralBackflow(nn.Module):
                 activation=actv_fn, kernel_init=self.kernel_init
             )(h_i, h_ij, x0_i, x0_ij)
         # the final displacement vector
-        bfdense = MyDense(n_dim, use_bias=False)
-        x = x + bfdense(h_i) * self.backflow_scale * rs
+        bfdense = nn.Dense(n_dim, kernel_init=self.kernel_init, use_bias=False)
+        x = x + bfdense(h_i)
         # neural jastrow
         x_pbc = jnp.concatenate(
             [jnp.sin(2 * jnp.pi * x @ invvec), jnp.cos(2 * jnp.pi * x @ invvec)],
             axis=-1)
-        x_expand = MyDense(self.single_size)(x_pbc)
+        x_expand = nn.Dense(self.mlp_width, kernel_init=self.kernel_init)(x_pbc)
         j_in = jnp.concatenate([h_i, actv_fn(x_expand)], axis=-1)
         # skip connection in the jastrow network
-        jas_sizes = [self.jastrow_width] * self.jastrow_layers + [1]
+        jas_sizes = [self.jas_width] * self.jastrow_layers + [1]
         jasmlp = build_mlp(jas_sizes,
                            activation=actv_fn, last_bias=False,
                            residual=True, rescale=True,
-                           kernel_init=self.kernel_init,
-                           param_dtype=_t_real)
+                           kernel_init=self.kernel_init)
         jastrow = jasmlp(j_in).sum()
         # return the final coordinates and the jastrow
-        return attach_spin(x, _s), (1., jastrow)
+        return x, (1., jastrow)
 
 
 class MessagePassingLayer(nn.Module):
@@ -156,5 +149,29 @@ class MessagePassingLayer(nn.Module):
         # Update the single-particle and particle-particle streams
         h_i = self.f1b(g_i, m_ij, out_size=h_i.shape[-1]) + h_i
         h_ij = self.f2b(g_ij, m_ij, out_size=h_ij.shape[-1]) + h_ij
-        # Send to next layer
+        # Final Layer Norm before sending into next layer
         return h_i, h_ij
+'''import numpy as np
+import jax
+nelec = 56
+rs = 30.
+wc_path = '/mnt/home/pyang/scratch/bwc/014-dev-fvmc/e_unpol/runs/workflow/wc-n%d' % 56
+rs0 = 30
+
+key = jax.random.PRNGKey(42)
+
+cell = jnp.array(np.loadtxt("%s/rs%d/axes.dat" % (wc_path, rs0))) * rs/rs0 * np.sqrt(nelec/56)
+model = NeuralBackflow(spins=[56],cell = cell)
+
+c = jax.random.uniform(key, (56,2))* cell[0][0]
+
+params = model.init(key,c)
+
+order = jax.random.shuffle(key, jnp.array([i for i in range(56)]))
+
+out1 = model.apply(params,c)[0]
+
+#print(out1.shape)
+
+out2 = model.apply(params,c[order])[0]
+print(out1[order]-out2)'''
