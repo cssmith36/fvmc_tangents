@@ -15,6 +15,7 @@ __all__ = [
     "hamiltonian",
     "sampler",
     "estimator",
+    "excited_states",
     "optimizer",
     "preconditioner",
     "wavefunction",

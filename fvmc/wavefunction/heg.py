@@ -50,6 +50,14 @@ class ElecProductModel(ElecWfn):
                 logf += result
         return sign, logf
 
+class excitedModel(ElecWfn):
+    elec_prod_model: nn.Module
+
+    def __call__(self, x:ElecConf):
+        return
+
+
+
 
 class PlanewaveSlater(ElecWfn):
     spins: Sequence[int]

@@ -11,6 +11,8 @@ from .hamiltonian import calc_ke_elec, calc_ke_full, calc_pe, get_nuclei_mass
 from .moire import OneShell
 from .utils import (PMAP_AXIS_NAME, ElecConf, FullConf, PmapAxis, exp_shifted,
                     split_spin, attach_spin)
+from jax.experimental.host_callback import id_print
+
 
 
 def get_log_psi(model_apply, params, stop_gradient=False):
@@ -66,7 +68,7 @@ def parse_spin_pots(spin_pots, **sysinfo):
 def build_eval_local_elec(model, elems, nuclei, cell=None, *,
                           ke_kwargs=None, pe_kwargs=None,
                           ext_pots=None, spin_pots=None,
-                          stop_gradient=True):
+                          stop_gradient=True,mode='train'):
     """create a function that evaluates local energy, sign and log abs of wavefunction.
 
     Args:
@@ -109,11 +111,19 @@ def build_eval_local_elec(model, elems, nuclei, cell=None, *,
                 pauli = model.apply(params, x, method="pauli")
             ene_comps.update({f"e_{name}": (fn(x_c) * pauli).sum()
                               for name, fn in spinpot_fns.items()})
-        eloc = jtu.tree_reduce(jnp.add, ene_comps, 0.0)
+        #if mode == 'tangent':
+        #    eloc = ene_comps['e_kin']
+        #else:
+        if mode == 'ke_test':
+            eloc = ene_comps['e_kin']
+        else:
+            eloc = jtu.tree_reduce(jnp.add, ene_comps, 0.0)
+
         if stop_gradient:
             ene_comps = jtu.tree_map(lax.stop_gradient, ene_comps)
             eloc = lax.stop_gradient(eloc)
         extras = {**ene_comps} # for now only log energy components
+
         return eloc, sign, logf, extras
 
     return eval_local
@@ -171,11 +181,21 @@ def build_eval_local_full(model, elems, cell=None, *,
 
 
 def get_batched_local(eval_local_fn, mini_batch=None,
-                      checkpoint=True, unroll_loop=False):
+                      checkpoint=True, unroll_loop=False, mode = 'train'):
     if not mini_batch:
-        return jax.vmap(eval_local_fn, in_axes=(None, 0), out_axes=0)
+        if mode == 'tangent':
+            print(mode)
+            return eval_local_fn
+        else:
+            return jax.vmap(eval_local_fn, in_axes=(None, 0), out_axes=0)
     def batch_local(params, data):
-        partial_local = jax.vmap(partial(eval_local_fn, params), 0, 0)
+        if mode == 'tangent':
+            print('here!')
+            #partial_local = jax.vmap(jax.value_and_grad(partial(eval_local_fn, params),has_aux=True), 0, 0)
+            partial_local = partial(eval_local_fn, params)
+        else:
+            partial_local = jax.vmap(partial(eval_local_fn, params), 0, 0)
+        #partial_local = jax.vmap(partial(eval_local_fn, params), 0, 0)
         if checkpoint:
             partial_local = jax.checkpoint(partial_local, prevent_cse=False)
         stack_data = jtu.tree_map(lambda x: x.reshape(
@@ -205,12 +225,11 @@ def clip_around(a, target, half_range, stop_gradient=True):
         c_max, c_min = map(lax.stop_gradient, (c_max, c_min))
     return jnp.clip(a, c_min, c_max)
 
-
-def build_eval_total(eval_local_fn, energy_clipping=None,
+def build_eval_total_tangent(eval_local_fn, energy_clipping=None,
                      clip_from_median=False, center_shifting=False,
                      mini_batch=None, checkpoint=True, unroll_loop=False,
                      pmap_axis_name=PMAP_AXIS_NAME,
-                     use_weighted=False):
+                     use_weighted=False, mode = 'tangent'):
     """Create a function that evaluates quantities on the whole batch of samples.
 
     The created function will take paramters and sampled data as input,
@@ -252,7 +271,7 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
             pmap_axis_name=pmap_axis_name)
 
     paxis = PmapAxis(pmap_axis_name)
-    batch_local = get_batched_local(eval_local_fn, mini_batch, checkpoint, unroll_loop)
+    batch_local = get_batched_local(eval_local_fn, mini_batch, checkpoint, unroll_loop, mode = mode)
 
     def eval_total(params, data):
         r"""return loss and statistical quantities calculated from samples.
@@ -269,10 +288,11 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
         """
         # data is a tuple of sample and log of sampling weight
         conf, _ = data
+        #id_print(conf.shape,what='conf')
         eloc, sign, logf, extras = batch_local(params, conf)
         if jnp.iscomplexobj(sign):
             logf += jnp.log(sign)
-
+        return eloc, extras
         # compute total energy
         etot = paxis.all_nanmean(eloc)
         # compute variance
@@ -281,8 +301,105 @@ def build_eval_total(eval_local_fn, energy_clipping=None,
         aux = dict(e_tot = etot.real, var_e = var_e, std_e = jnp.sqrt(var_e),
                    nans = jnp.isnan(eloc).sum())
         for key, val in extras.items():
-            aux[key] = paxis.all_nanmean(val).real
+                aux[key] = paxis.all_nanmean(val).real
+        return etot.real, aux
+        # clipping the local energy (for making the loss)
+        eclip = eloc
+        if energy_clipping and energy_clipping > 0:
+            ecenter = (jnp.median(paxis.all_gather(eloc.real))
+                       if clip_from_median else etot.real)
+            tv = paxis.all_nanmean(jnp.abs(eloc - etot))
+            eclip = clip_around(eloc, ecenter, energy_clipping * tv, stop_gradient=True)
+        # shift the constant and get diff
+        ebar = paxis.all_nanmean(eclip) if center_shifting else etot
+        ediff = lax.stop_gradient(eclip - ebar).conj()
+        # 2 * real for h.c.
+        kfac_jax.register_squared_error_loss(logf.real[:, None])
+        loss = paxis.all_nanmean(2 * (logf * ediff).real)
 
+        return loss, aux
+
+    return eval_total
+
+def build_eval_total(eval_local_fn, energy_clipping=None,
+                     clip_from_median=False, center_shifting=False,
+                     mini_batch=None, checkpoint=True, unroll_loop=False,
+                     pmap_axis_name=PMAP_AXIS_NAME,
+                     use_weighted=False,mode='train'):
+    """Create a function that evaluates quantities on the whole batch of samples.
+
+    The created function will take paramters and sampled data as input,
+    and returns a tuple with first element a loss that gives correct gradient to parameters,
+    and the second element a dict contains multiple statistical quantities of the samples.
+
+    Args:
+        eval_local_fn (Callable): callable which evaluates
+            the local energy, sign and log of absolute value of wfn.
+        energy_clipping (float, optional): If greater than zero, clip local energies that are
+            outside [E_t - n D, E_t + n D], where E_t is the mean local energy, n is
+            this value and D the mean absolute deviation of the local energies.
+            Defaults to None (no clipping).
+        clip_from_median (bool): If true, center the clipping window at the median rather
+            than the mean. Potentially expensive in multi-host training, but more
+            accurate/robust to outliers. Defaults to False.
+        center_shifting (bool): If True, shift the average local energy so that
+            the mean difference of the batch is always zero. Will only be useful with
+            effective local energy clipping. Defaults to True.
+        pmap_axis_name (str): axis name used in pmap
+        use_weighted (bool): If True, use `build_eval_total_weighted`, which will
+            take the log of sample weight (`data[1]`) into account
+
+    Returns:
+        Callable with signature (params, data) -> (loss, aux) where data is a tuple of
+        samples and corresponding probbility densities of the samples. loss is used in training
+        the parameters that gives the correct gradient but its value is meaningless.
+        aux is a dict that contains multiple statistical quantities calculated from the sample.
+    """
+    if use_weighted:
+        return build_eval_total_weighted(
+            eval_local_fn=eval_local_fn,
+            energy_clipping=energy_clipping,
+            clip_from_median=clip_from_median,
+            center_shifting=center_shifting,
+            mini_batch=mini_batch,
+            checkpoint=checkpoint,
+            unroll_loop=unroll_loop,
+            pmap_axis_name=pmap_axis_name)
+
+    paxis = PmapAxis(pmap_axis_name)
+    batch_local = get_batched_local(eval_local_fn, mini_batch, checkpoint, unroll_loop,mode=mode)
+
+    def eval_total(params, data):
+        r"""return loss and statistical quantities calculated from samples.
+
+        The loss is given in the following form:
+
+            (\psi #[\psi^c (E_l^c - E_tot)]) / (#[\psi \psi^c]) + h.c.
+
+        where \psi is the wavefunction, E_l is the (clipped) local energy,
+        E_tot is the estimated total energy, ^c stands for conjugation,
+        and #[...] stands for stop gradient. One can easily check that
+        this form will give the correct gradient estimation.
+        Note that instead of doing the h.c., we are using 2 * Real[...].
+        """
+        # data is a tuple of sample and log of sampling weight
+        conf, _ = data
+        #id_print(conf.shape,what='conf')
+        eloc, sign, logf, extras = batch_local(params, conf)
+        if jnp.iscomplexobj(sign):
+            logf += jnp.log(sign)
+        if mode == 'tangent':
+            return eloc, extras
+        # compute total energy
+        etot = paxis.all_nanmean(eloc)
+        # compute variance
+        var_e = paxis.all_nanmean(jnp.abs(eloc - etot)**2)
+        # form aux data dict, divide tot_w for correct gradient
+        aux = dict(e_tot = etot.real, var_e = var_e, std_e = jnp.sqrt(var_e),
+                   nans = jnp.isnan(eloc).sum())
+        for key, val in extras.items():
+                aux[key] = paxis.all_nanmean(val).real
+        return etot.real, aux
         # clipping the local energy (for making the loss)
         eclip = eloc
         if energy_clipping and energy_clipping > 0:

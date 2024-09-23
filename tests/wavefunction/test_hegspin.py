@@ -113,6 +113,88 @@ def test_apply_pauli(cell, multi_det, with_jastrow):
     np.testing.assert_allclose(pauli, ref, atol=1e-6)
 
 
+def _common_config(n_elec=12, n_k=36, seed=42, iterations=10000):
+    rs = 30
+    sig = 2.6 * rs**(3/4)
+    cell = np.diag([1.714163052355123114e+02, 1.979344999424281752e+02])
+    wgrid = np.mgrid[:3, :4].transpose(1, 2, 0).reshape(-1, 2)
+    wcpos = wgrid * np.array([1/3, 1/4]) @ cell
+
+    # ansatz
+    ansatz = PlanewaveSlaterSpin(
+        cell=cell, # shape (ndim, ndim)
+        n_k=n_k, # number of k-points
+        # below are all default values, written here for demonstration
+        multi_det=None, # None or interger representing the number of determinants
+        twist=None, # single twist, shape (ndim,), between 0 and 1
+        close_shell=False, # whether to round up k points to closed-shell
+        init_scale=0.01, # the scale of initial random parameters
+    )
+    # initialize random parameters (do some weird stuff to make orbitals more distinct)
+    key = jax.random.PRNGKey(seed)
+    key, subkey1, subkey2, subkey3 = jax.random.split(key, 4)
+    #define pseudo spin up number to make orbitals more distinct for different random seeds
+    n_up = jax.random.randint(subkey1, shape=(1,), minval=1, maxval=n_elec-1)[0]
+    n_up = 12
+    n_dn = n_elec - n_up
+    print('n_up,n_dn',n_up,n_dn)
+    # orbital coeff for spin up basis (random & fixed part)
+    coeffup = jax.random.uniform(key, shape=(n_k, n_elec), minval=-1.0, maxval=1.0)
+    # assign to params
+    params = ansatz.init(key, (jnp.zeros((n_elec, 2)), jnp.zeros(n_elec)))
+    print('coeeff shape', coeffup.shape)
+    params['params']['orbital_fn']['VmapDense_0']['kernel'] = coeffup
+
+    # init coords and spins for sampler
+    def conf_init_fn(key):
+        key1, key2 = jax.random.split(key)
+        coords = wcpos + 0.1 * sig * jax.random.normal(key1, wcpos.shape)
+        spins = jax.random.uniform(key2, (n_elec,)) * 2 * jnp.pi
+        return coords, spins
+
+    # build config for fvmc run
+    cfg = fvmc.config.default()
+    cfg.seed = seed
+    cfg.verbosity = "INFO"
+    # <system>
+    cfg.system.charge = -n_elec
+    cfg.system.elems = None
+    cfg.system.nuclei = None
+    cfg.system.cell = cell
+    # <sample>
+    cfg.sample.size = 10240
+    cfg.sample.burn_in = 100
+    cfg.sample.sampler = 'hmc'
+    cfg.sample.hmc.dt = 0.025 * rs
+    cfg.sample.hmc.length = None
+    cfg.sample.hmc.steps = 50
+    cfg.sample.hmc.grad_clipping = 2.
+    cfg.sample.hmc.speed_limit = 5.
+    # cfg.sample.hmc.jitter_dt = 0.2
+    cfg.sample.hmc.segments = 5
+    cfg.sample.hmc.div_threshold = 5
+    cfg.sample.hmc.mass = (1., 500.)
+    cfg.sample.conf_init_fn = conf_init_fn
+    # <energy>
+    cfg.loss.energy_clipping = None #5.
+    cfg.loss.clip_from_median = True
+    # <optimize>
+    cfg.optimize.iterations = iterations
+    cfg.optimize.optimizer = 'adabelief'
+    cfg.optimize.lr.base = 1e-3 # 1e-2
+    cfg.optimize.lr.decay_time = 100
+    # <output>
+    cfg.log.stat_every = 1 #10
+    cfg.log.dump_every = 100
+    cfg.log.ckpt_keep = 1 # None
+    cfg.log.ckpt_every = 1000
+    cfg.log.use_tensorboard = False
+    # <ansatz>
+    cfg.ansatz = ansatz
+    cfg.restart.params = params
+
+    return cfg
+
 def _common_spin_config(n_elec=12, n_k=36, seed=42, iterations=100):
     rs = 30
     sig = 2.6 * rs**(3/4)
@@ -135,7 +217,9 @@ def _common_spin_config(n_elec=12, n_k=36, seed=42, iterations=100):
     key, subkey1, subkey2, subkey3 = jax.random.split(key, 4)
     #define pseudo spin up number to make orbitals more distinct for different random seeds
     n_up = jax.random.randint(subkey1, shape=(1,), minval=1, maxval=n_elec-1)[0]
+    #n_up = 12
     n_dn = n_elec - n_up
+    print('n_up,n_dn',n_up,n_dn)
     # orbital coeff for spin up basis (random & fixed part)
     coeffup = jax.random.uniform(key, shape=(n_k, n_elec), minval=-1.0, maxval=1.0)
     block1 = jnp.eye(n_up)
@@ -492,3 +576,5 @@ def test_slater_spin_pauli_optimize(tmp_path):
     print("final results:", last_mean, "+-", last_err)
     assert last_std < 1e-4
     np.testing.assert_allclose(last_mean, -n_elec, atol=3 * last_err)
+
+#test_slater_spin_wick_eval('/mnt/home/csmith1/ceph/excitedStates/fvmc/tests/wavefunction/tmp')

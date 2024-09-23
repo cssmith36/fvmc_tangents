@@ -272,7 +272,6 @@ def build_training_step(sampler, optimizer):
 
     return training_step
 
-
 def run(step_fn, train_state, iterations, log_cfg):
     """run the optimization loop (sample + update)"""
 
@@ -322,7 +321,6 @@ def run(step_fn, train_state, iterations, log_cfg):
 
         # main training loop
         train_state, (mc_info, opt_info), sample_data = step_fn(train_state)
-
         # nan check
         if not jtu.tree_all(
           jtu.tree_map(lambda a: jnp.all(~jnp.isnan(a)), train_state.params)):
